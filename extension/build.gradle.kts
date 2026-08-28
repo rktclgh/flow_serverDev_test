@@ -38,6 +38,9 @@ dependencies {
 	testImplementation("org.springframework.boot:spring-boot-starter-webmvc-test")
 
 	// CHECK 정규식·INET·plpgsql 트리거는 H2로 검증 불가 (SPEC §13)
+	// Spring Boot 4 의 BOM 은 Testcontainers 버전을 관리하지 않는다(3.x 와 달라진 점).
+	// 버전을 개별로 박지 않고 BOM 을 import 해 모듈 간 버전 정합을 유지한다.
+	testImplementation(platform("org.testcontainers:testcontainers-bom:1.21.4"))
 	testImplementation("org.springframework.boot:spring-boot-testcontainers")
 	testImplementation("org.testcontainers:junit-jupiter")
 	testImplementation("org.testcontainers:postgresql")
