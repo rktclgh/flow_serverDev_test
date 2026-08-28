@@ -1,0 +1,12 @@
+.env
+.env.prod
+.DS_Store
+
+# OMC 작업 상태 (운영 산출물)
+.omc/
+
+# 과제 원문(회사 문서) — 공개 저장소에 올리지 않는다
+과제_파일업로드_AI개발.md
+
+# 내부 설계 문서 — 제출 시점에 CONSIDERATIONS.md 로 정제할 예정
+SPEC.md
