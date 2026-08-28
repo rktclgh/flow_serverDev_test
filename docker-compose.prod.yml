@@ -1,0 +1,21 @@
+# 서버 배포용 override.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# 기존 운영 인스턴스(Postgres·vlainter-minio)를 재사용하지 않고 전용 컨테이너를 띄운다.
+#   - 운영 중인 다른 서비스에 영향을 주지 않는다
+#   - 과제 종료 후 `docker compose down -v` 한 번으로 완전히 정리된다
+#   - vlainter-minio 는 127.0.0.1 에만 바인딩되어 있어 다른 컨테이너에서 접근할 수도 없다
+#
+# db·minio 포트는 호스트에 노출하지 않는다. app 만 127.0.0.1 로 열어 nginx 가 프록시한다.
+
+services:
+  db:
+    ports: []
+
+  minio:
+    ports: []
+
+  app:
+    ports:
+      - "127.0.0.1:18081:8080"
+    restart: unless-stopped
