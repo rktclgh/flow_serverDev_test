@@ -1,0 +1,57 @@
+spring:
+  application:
+    name: extension
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/extguard}
+    username: ${SPRING_DATASOURCE_USERNAME:extguard}
+    password: ${SPRING_DATASOURCE_PASSWORD:extguard}
+
+  jpa:
+    hibernate:
+      # SPEC §12 — CHECK 제약·정규식 조건·plpgsql 트리거를 Hibernate가 생성/유지하지 못한다.
+      # update 사용 금지.
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+  servlet:
+    multipart:
+      max-file-size: ${APP_UPLOAD_MAX_SIZE:10MB}
+      max-request-size: 12MB
+
+server:
+  port: 8080
+  # nginx가 X-Forwarded-* 를 넣어주므로 신뢰 (실제 client IP 복원)
+  forward-headers-strategy: native
+  error:
+    # 공개 배포이므로 내부 정보를 응답에 흘리지 않는다.
+    # 기본값은 스택트레이스·예외 메시지를 노출해 내부 경로와 라이브러리 구성이 드러난다.
+    include-stacktrace: never
+    include-message: never
+    include-binding-errors: never
+    whitelabel:
+      enabled: false
+  tomcat:
+    # SPEC §10.1 — 미설정 시 크기 초과 거부 후 남은 바이트를 읽지 않고 커넥션을 끊어
+    # 브라우저에 ERR_CONNECTION_RESET 이 뜬다. 서버는 정상 거부로 로깅하는데 사용자는 원인을 모른다.
+    max-swallow-size: -1
+
+app:
+  # SPEC §7.0 — 정책 변경 API 보호. 조회·업로드는 공개.
+  admin-token: ${APP_ADMIN_TOKEN:}
+  policy:
+    # SPEC §5 — 확장자 없는 파일은 기본 차단.
+    allow-extensionless: ${APP_POLICY_ALLOW_EXTENSIONLESS:false}
+  storage:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ACCESS_KEY:minioadmin}
+    secret-key: ${MINIO_SECRET_KEY:minioadmin}
+    bucket: ${MINIO_BUCKET:extguard-uploads}
+
+logging:
+  level:
+    flow.test.serverdev: INFO

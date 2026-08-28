@@ -1,0 +1,67 @@
+# 로컬/제출용 self-contained 구성.
+#   docker compose up --build   →  http://localhost:${APP_PORT:-8080}
+#
+# 서버 배포는 docker-compose.prod.yml 을 쓴다 (기존 Postgres·MinIO 인스턴스에 연결).
+# 로컬 포트는 흔한 충돌(5432, 9000)을 피해 잡아두었다.
+
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-extguard}
+      POSTGRES_USER: ${POSTGRES_USER:-extguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-extguard}
+    ports:
+      - "${DB_PORT:-15432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-extguard} -d ${POSTGRES_DB:-extguard}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "${MINIO_PORT:-19100}:9000"
+      - "${MINIO_CONSOLE_PORT:-19101}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${POSTGRES_DB:-extguard}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-extguard}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-extguard}
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-extguard-uploads}
+      APP_ADMIN_TOKEN: ${APP_ADMIN_TOKEN:-local-dev-token-change-me}
+      APP_POLICY_ALLOW_EXTENSIONLESS: ${APP_POLICY_ALLOW_EXTENSIONLESS:-false}
+      APP_UPLOAD_MAX_SIZE: ${APP_UPLOAD_MAX_SIZE:-10MB}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    restart: unless-stopped
+
+volumes:
+  db-data:
+  minio-data:
