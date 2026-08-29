@@ -18,6 +18,13 @@ public final class TestImages {
 	/** 배포 대상 서버와 같은 메이저 버전이어야 한다. */
 	public static final String POSTGRES = "postgres:17-alpine";
 
+	/**
+	 * MinIO. <b>{@code latest} 를 쓰지 않는다</b> — 같은 커밋이 어제와 오늘 다른 이미지에서
+	 * 도는 것은 이 클래스가 막으려는 바로 그 상황이다. 태그를 고정하면 이미지가 바뀌는 시점이
+	 * 커밋으로 남는다.
+	 */
+	public static final String MINIO = "minio/minio:RELEASE.2025-09-07T16-13-09Z";
+
 	private TestImages() {
 	}
 }
