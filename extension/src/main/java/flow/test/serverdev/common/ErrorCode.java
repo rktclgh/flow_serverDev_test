@@ -98,6 +98,18 @@ public enum ErrorCode {
 	 */
 	RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS),
 
+	/**
+	 * 그 {@code fileId} 로 내보낼 파일이 없다. (SPEC §7.6)
+	 *
+	 * <p>{@code ALLOWED} 가 아닌 기록({@code PENDING}·{@code ERROR}·{@code BLOCKED})도 전부
+	 * 이 코드다. 상태를 구분해 답하면 <b>응답 차이만으로 "그 식별자는 존재하지만 차단됐다" 를
+	 * 알아낼 수 있다.</b> 감사 기록의 내용은 관리자의 것이지 요청자의 것이 아니다.
+	 *
+	 * <p>{@link #NOT_FOUND} 와 나누는 이유는 그것이 <b>스프링이 판정한</b> 경로 부재이기
+	 * 때문이다. 이 코드는 경로는 맞는데 대상이 없다는 애플리케이션의 판정이다.
+	 */
+	FILE_NOT_FOUND(HttpStatus.NOT_FOUND),
+
 	/** 스토리지가 저장을 거부했다. 객체가 없는 것이 확실하므로 다시 시도하면 된다. */
 	STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE),
 
