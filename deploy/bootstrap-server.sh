@@ -47,7 +47,9 @@ REMOTE
 echo "== nginx =="
 scp deploy/extguard-limits.conf "$SSH_HOST:/tmp/extguard-limits.conf"
 scp deploy/flowtest.rktclgh.site.conf "$SSH_HOST:/tmp/flowtest.rktclgh.site.conf"
-ssh "$SSH_HOST" 'sudo install -m 644 /tmp/extguard-limits.conf /etc/nginx/conf.d/extguard-limits.conf \
+# sudo 는 비밀번호를 요구하므로 -t 로 TTY 를 붙인다. 없으면
+# "a terminal is required to read the password" 로 끝난다.
+ssh -t "$SSH_HOST" 'sudo install -m 644 /tmp/extguard-limits.conf /etc/nginx/conf.d/extguard-limits.conf \
   && sudo install -m 644 /tmp/flowtest.rktclgh.site.conf /etc/nginx/sites-available/flowtest.rktclgh.site.conf \
   && sudo ln -sfn /etc/nginx/sites-available/flowtest.rktclgh.site.conf /etc/nginx/sites-enabled/flowtest.rktclgh.site.conf \
   && rm -f /tmp/extguard-limits.conf /tmp/flowtest.rktclgh.site.conf \
