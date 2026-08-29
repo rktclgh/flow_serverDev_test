@@ -217,6 +217,29 @@ class FileDownloadControllerTest extends IntegrationTest {
 		}
 
 		/**
+		 * ★ <b>지운 파일은 객체가 남아 있어도 내보내지 않는다.</b>
+		 *
+		 * <p>여기서 객체를 일부러 남긴다. 정상적으로 지운 파일은 객체가 없어 <b>조건이 없어도</b>
+		 * 404 가 나오고, 그러면 {@code deleted_at} 조건을 지워도 아무 테스트가 죽지 않는다 —
+		 * 실측해보니 실제로 그랬다. 겹친 방어 중 하나를 지웠는데 다른 하나가 가려주는 상황이다.
+		 *
+		 * <p>객체 삭제는 실패할 수 있다(스토리지 장애). 그때 행은 {@code deleted_at} 이 찍힌 채
+		 * 객체만 남는데, 조건이 없으면 <b>이미 지운 파일이 그대로 다운로드된다.</b>
+		 * 그것이 이 조건이 막는 실제 상황이므로 그 상태를 직접 만들어 본다.
+		 */
+		@Test
+		@DisplayName("삭제된 파일은 404 다 — 객체 삭제가 실패해 남아 있어도")
+		void deletedWithSurvivingObject() throws Exception {
+			UUID fileId = storeWithResult("deleted.pdf", "ALLOWED", null);
+			jdbc.update("UPDATE upload_audit SET deleted_at = now() WHERE file_id = ?::uuid",
+				fileId.toString());
+
+			mockMvc.perform(get("/api/files/{fileId}/content", fileId))
+				.andExpect(status().isNotFound())
+				.andExpect(jsonPath("$.code").value("FILE_NOT_FOUND"));
+		}
+
+		/**
 		 * {@code BLOCKED} 행은 {@code file_id} 가 NULL 이라(DB 제약) <b>지목 자체가 불가능하다.</b>
 		 * 그래서 차단된 파일을 요청하는 경로는 "모르는 식별자" 와 같은 경로로 수렴한다.
 		 */
