@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { postFile } from '../api/client'
-import { messageFor, rejectionDetail } from '../messages'
+import { messageFor, rejectionDetail, toneFor } from '../messages'
+import { pushToast, type ToastInput } from '../toast'
 import type { ApiError, UploadResponse } from '../api/types'
 
 /** SPEC §11.2 — 큐 길이 상한. 화면이 감당할 수 있는 범위로 자른다. */
@@ -14,45 +15,48 @@ const TIMEOUT_MS = 60_000
 
 const MAX_ATTEMPTS = 3
 
-export type ItemStatus =
-  | 'QUEUED'
-  | 'UPLOADING'
-  | 'RETRYING'
-  | 'DONE'
-  | 'REJECTED'
-  | 'FAILED'
-  | 'CANCELLED'
+/**
+ * ★ 큐에는 **아직 처리 중인 것만** 남는다.
+ *
+ * 예전에는 `DONE / REJECTED / FAILED / CANCELLED` 도 상태로 두고 목록에 남겼다. 그래서
+ * 파일 20개를 올리면 차단된 것들이 계속 쌓여 화면이 실패 로그가 됐다. 끝난 항목은
+ * 토스트로 한 번 알리고 목록에서 뺀다 — 성공한 파일의 자리는 "업로드된 파일" 목록이고,
+ * 거부된 파일은 애초에 남길 자리가 없다.
+ */
+export type ItemStatus = 'QUEUED' | 'UPLOADING' | 'RETRYING'
 
 export interface QueueItem {
   id: string
   file: File
   status: ItemStatus
-  /** 서버가 준 코드. 화면 문구는 이것으로 정한다. */
-  code: string | null
   message: string
-  /** "무엇이 / 왜" 의 뒷부분. 차단 사유를 구체적으로 보여준다. */
-  reason: string | null
   /** 화면이 미리 짚어준 경고. 서버 판정을 대신하지 않는다. */
   hint: string | null
   attempts: number
   waitSeconds: number
-  fileId: string | null
 }
 
 interface QueueState {
   items: QueueItem[]
   running: boolean
-  enqueue: (files: File[], hintOf: (file: File) => string | null) => number
+  /** 이번 묶음에서 처리를 마친 개수 / 받아들인 개수. 끝난 항목이 사라져도 진척은 보여야 한다. */
+  processed: number
+  total: number
+  /**
+   * 업로드 성공 횟수. "업로드된 파일" 목록이 이 값을 보고 다시 조회한다.
+   *
+   * 응답을 목록에 직접 끼워 넣지 않는 이유는 §11.1 의 "낙관적 반영 금지" 다 —
+   * 화면이 들고 있는 응답이 아니라 서버가 실제로 갖고 있는 목록을 보여준다.
+   */
+  succeeded: number
+  enqueue: (files: File[], hintOf: (file: File) => string | null) => void
   remove: (id: string) => void
   cancel: (id: string) => void
-  clearFinished: () => void
   run: () => Promise<void>
 }
 
 /** AbortController 는 직렬화되지 않으므로 상태 밖에 둔다. */
 const controllers = new Map<string, AbortController>()
-
-const TERMINAL: ItemStatus[] = ['DONE', 'REJECTED', 'FAILED', 'CANCELLED']
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -79,31 +83,44 @@ function isRetryable(status: number, code: string | null): boolean {
 export const useUploadQueue = create<QueueState>((set, get) => ({
   items: [],
   running: false,
+  processed: 0,
+  total: 0,
+  succeeded: 0,
 
   enqueue: (files, hintOf) => {
     const current = get().items
-    const room = QUEUE_LIMIT - current.filter((item) => !TERMINAL.includes(item.status)).length
+    const room = QUEUE_LIMIT - current.length
     const accepted = files.slice(0, Math.max(room, 0))
+    const dropped = files.length - accepted.length
+
+    // 앞 묶음이 다 끝난 뒤 새로 올리는 것이면 진척 카운터를 처음부터 센다.
+    const fresh = current.length === 0 && !get().running
 
     set({
+      processed: fresh ? 0 : get().processed,
+      total: (fresh ? 0 : get().total) + accepted.length,
       items: [
         ...current,
         ...accepted.map((file) => ({
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           file,
           status: 'QUEUED' as ItemStatus,
-          code: null,
           message: '대기 중',
-          reason: null,
           hint: hintOf(file),
           attempts: 0,
           waitSeconds: 0,
-          fileId: null,
         })),
       ],
     })
+
+    if (dropped > 0) {
+      pushToast({
+        tone: 'warning',
+        title: `${dropped}개는 담지 못했어요`,
+        body: `큐는 한 번에 ${QUEUE_LIMIT}개까지예요. 처리된 뒤에 다시 올려 주세요.`,
+      })
+    }
     void get().run()
-    return files.length - accepted.length
   },
 
   remove: (id) => {
@@ -114,10 +131,6 @@ export const useUploadQueue = create<QueueState>((set, get) => ({
 
   cancel: (id) => {
     controllers.get(id)?.abort()
-  },
-
-  clearFinished: () => {
-    set({ items: get().items.filter((item) => !TERMINAL.includes(item.status)) })
   },
 
   /**
@@ -134,6 +147,15 @@ export const useUploadQueue = create<QueueState>((set, get) => ({
         items: get().items.map((item) => (item.id === id ? { ...item, ...changes } : item)),
       })
 
+    /** 끝난 항목의 종착지. 사유를 토스트로 한 번 알리고 목록에서 뺀다. */
+    const finish = (id: string, toast: ToastInput) => {
+      pushToast(toast)
+      set({
+        items: get().items.filter((item) => item.id !== id),
+        processed: get().processed + 1,
+      })
+    }
+
     try {
       let lastRequestAt = 0
 
@@ -141,6 +163,7 @@ export const useUploadQueue = create<QueueState>((set, get) => ({
         const next = get().items.find((item) => item.status === 'QUEUED')
         if (!next) break
 
+        const filename = next.file.name
         let attempt = 0
         for (;;) {
           attempt += 1
@@ -166,35 +189,44 @@ export const useUploadQueue = create<QueueState>((set, get) => ({
 
             if (response.ok) {
               const body = (await response.json()) as UploadResponse
-              patch(next.id, { status: 'DONE', message: '완료', fileId: body.fileId })
+              set({ succeeded: get().succeeded + 1 })
+              finish(next.id, {
+                tone: 'success',
+                title: body.originalFilename || filename,
+                body: '업로드했어요.',
+              })
               break
             }
 
-            const body = await response.json().catch(() => null) as ApiError | null
+            const body = (await response.json().catch(() => null)) as ApiError | null
             const code = body?.code ?? null
 
             if (!isRetryable(response.status, code)) {
-              patch(next.id, {
-                status: 'REJECTED',
-                code,
-                message: messageFor(code, response.status),
-                reason: rejectionDetail(code, body?.detail),
+              // 정책 거부는 다시 보내도 답이 같다. 여기서 확정하고 사유만 남긴다.
+              finish(next.id, {
+                tone: toneFor(code),
+                title: filename,
+                body: messageFor(code, response.status),
+                detail: rejectionDetail(code, body?.detail),
               })
               break
             }
 
             if (attempt >= MAX_ATTEMPTS) {
-              patch(next.id, { status: 'FAILED', code, message: messageFor(code, response.status) })
+              finish(next.id, {
+                tone: 'error',
+                title: filename,
+                body: `${messageFor(code, response.status)} (${MAX_ATTEMPTS}번 시도했어요)`,
+              })
               break
             }
 
             const retryAfter = Number(response.headers.get('Retry-After'))
-            const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
-              ? retryAfter * 1_000
-              : backoffMs(attempt)
+            const waitMs =
+              Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1_000 : backoffMs(attempt)
+            // 재시도 대기는 아직 처리 중이다. 목록에 남겨 두고 다음 시도를 기다린다.
             patch(next.id, {
               status: 'RETRYING',
-              code,
               message: `${messageFor(code, response.status)} (${Math.ceil(waitMs / 1000)}초 후 재시도)`,
               waitSeconds: Math.ceil(waitMs / 1000),
             })
@@ -203,16 +235,18 @@ export const useUploadQueue = create<QueueState>((set, get) => ({
             const aborted = error instanceof DOMException && error.name === 'AbortError'
 
             if (aborted && !timedOut) {
-              patch(next.id, { status: 'CANCELLED', message: '취소됨' })
+              finish(next.id, { tone: 'info', title: filename, body: '업로드를 취소했어요.' })
               break
             }
 
-            const failure = timedOut
-              ? '응답이 없어 중단했어요.'
-              : '네트워크에 연결하지 못했어요.'
+            const failure = timedOut ? '응답이 없어 중단했어요.' : '네트워크에 연결하지 못했어요.'
 
             if (attempt >= MAX_ATTEMPTS) {
-              patch(next.id, { status: 'FAILED', message: failure })
+              finish(next.id, {
+                tone: 'error',
+                title: filename,
+                body: `${failure} (${MAX_ATTEMPTS}번 시도했어요)`,
+              })
               break
             }
             const waitMs = backoffMs(attempt)

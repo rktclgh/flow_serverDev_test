@@ -1,3 +1,5 @@
+import type { ToastTone } from './toast'
+
 /**
  * 서버 코드 → 사용자 문구. (SPEC §19)
  *
@@ -41,11 +43,38 @@ const MESSAGES: Record<string, string> = {
  */
 export function messageFor(code: string | null, status?: number): string {
   if (code && MESSAGES[code]) return MESSAGES[code]
+  // 매핑에 없는 코드가 와도 화면이 침묵하지 않는다. 사용자에겐 일반 문구, 콘솔엔 원본 코드.
+  if (code) console.warn(`[ExtGuard] 매핑되지 않은 응답 코드: ${code} (HTTP ${status ?? '?'})`)
   if (status === 413) return '파일이 너무 커요. (서버 앞단에서 거부됐어요)'
   if (status === 429) return '요청이 많아요. 잠시 후 다시 시도해 주세요.'
   if (status === 403) return '요청이 차단됐어요. 주소나 파일 이름을 확인해 주세요.'
   if (status && status >= 500) return '서버에 문제가 있어요. 잠시 후 다시 시도해 주세요.'
   return '요청을 처리하지 못했어요.'
+}
+
+/**
+ * 코드 → 토스트 유형. (SPEC §19 매핑표의 "유형" 열)
+ *
+ * 전부 빨간 error 로 띄우면 "빈 파일이에요" 와 "실행 파일이에요" 가 같은 무게로 보인다.
+ * 사용자가 고칠 수 있는 실수(warning)와 정책이 막은 것(error), 서버가 알려주는 상황(info)은
+ * 다르게 읽혀야 한다. 매핑에 없으면 error 로 둔다 — 모르는 실패를 조용한 색으로 흘리지 않는다.
+ */
+const TONES: Record<string, ToastTone> = {
+  EXT_DUPLICATE: 'warning',
+  EXT_LIMIT_EXCEEDED: 'warning',
+  EXT_FIXED_CONFLICT: 'info',
+  EXT_NOT_FOUND: 'info',
+  EXT_FIXED_NOT_DELETABLE: 'info',
+
+  FILE_COUNT_EXCEEDED: 'warning',
+  FILE_EMPTY: 'warning',
+  // 첫 요청이 성공했을 수 있다. 실패라고 단정하지 않는다(§21.6).
+  UPLOAD_OUTCOME_UNKNOWN: 'warning',
+  RATE_LIMITED: 'info',
+}
+
+export function toneFor(code: string | null): ToastTone {
+  return (code && TONES[code]) || 'error'
 }
 
 /** 차단 사유를 "무엇이 / 왜" 로 만든다. (과제 2-2 "명확한 사유") */

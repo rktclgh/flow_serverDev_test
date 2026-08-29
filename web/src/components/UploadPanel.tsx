@@ -9,10 +9,6 @@ const LABELS: Record<ItemStatus, string> = {
   QUEUED: '대기',
   UPLOADING: '올리는 중',
   RETRYING: '재시도 대기',
-  DONE: '완료',
-  REJECTED: '차단됨',
-  FAILED: '실패',
-  CANCELLED: '취소됨',
 }
 
 interface Props {
@@ -24,12 +20,14 @@ interface Props {
  *
  * 여러 파일을 한 요청에 담지 않는다. 큐는 화면이 들고 파일 하나당 요청 하나를 순차로 보낸다 —
  * 부분 성공이 자연스럽고, 파일마다 다른 거부 사유를 그대로 보여줄 수 있다.
+ *
+ * ★ 이 목록은 **처리 중인 것만** 보여준다. 거부·실패·취소는 토스트로 한 번 알리고 사라지고,
+ * 성공한 파일은 "업로드된 파일" 목록에 나타난다. 끝난 항목을 여기 남기면 화면이 실패 로그가 된다.
  */
 export function UploadPanel({ policy }: Props) {
-  const { items, enqueue, remove, cancel, clearFinished } = useUploadQueue()
+  const { items, processed, total, enqueue, remove, cancel } = useUploadQueue()
   const inputRef = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
-  const [notice, setNotice] = useState<string | null>(null)
 
   /**
    * 올리기 전에 짚어주는 경고. <b>서버 판정을 대신하지 않는다</b>(SPEC §11.2).
@@ -49,13 +47,9 @@ export function UploadPanel({ policy }: Props) {
 
   const accept = (files: FileList | null) => {
     if (!files || files.length === 0) return
-    const dropped = enqueue(Array.from(files), hintOf)
-    setNotice(dropped > 0 ? `큐가 가득 차 ${dropped}개는 담지 못했어요. (최대 ${QUEUE_LIMIT}개)` : null)
+    // 담지 못한 개수도 큐에 남기지 않는다 — 스토어가 토스트로 알린다.
+    enqueue(Array.from(files), hintOf)
   }
-
-  const finished = items.filter((item) =>
-    ['DONE', 'REJECTED', 'FAILED', 'CANCELLED'].includes(item.status),
-  ).length
 
   return (
     <section className="panel">
@@ -91,17 +85,13 @@ export function UploadPanel({ policy }: Props) {
         <p className="muted">한 번에 최대 {QUEUE_LIMIT}개, 파일당 10MB까지. 하나씩 차례로 올라가요.</p>
       </div>
 
-      {notice && <p className="warn" role="status">{notice}</p>}
-
-      {items.length > 0 && (
+      {items.length > 0 ? (
         <>
           <div className="queue-head">
+            {/* 끝난 항목이 목록에서 빠져도 진척은 남는다. 진행률 바 대신 이 숫자를 쓴다(§11.3). */}
             <span>
-              {finished}/{items.length} 완료
+              {processed}/{total} 처리 · {items.length}개 남음
             </span>
-            <button type="button" onClick={clearFinished} disabled={finished === 0}>
-              끝난 항목 지우기
-            </button>
           </div>
 
           <ul className="queue">
@@ -115,11 +105,7 @@ export function UploadPanel({ policy }: Props) {
                 </div>
                 <div className="queue-sub">
                   <span className="message">{item.message}</span>
-                  {/* 과제 2-2 "명확한 사유" — 무엇이 / 왜 를 함께 보여준다 */}
-                  {item.reason && <span className="reason">{item.reason}</span>}
-                  {item.status === 'QUEUED' && item.hint && (
-                    <span className="hint">{item.hint}</span>
-                  )}
+                  {item.status === 'QUEUED' && item.hint && <span className="hint">{item.hint}</span>}
                 </div>
                 {item.status === 'QUEUED' && (
                   <button type="button" onClick={() => remove(item.id)} aria-label="큐에서 제거">
@@ -135,6 +121,10 @@ export function UploadPanel({ policy }: Props) {
             ))}
           </ul>
         </>
+      ) : (
+        total > 0 && (
+          <p className="muted queue-empty">{total}개를 처리했어요. 결과는 알림과 아래 목록에 있어요.</p>
+        )
       )}
     </section>
   )
