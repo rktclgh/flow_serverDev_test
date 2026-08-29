@@ -19,12 +19,17 @@ import flow.test.serverdev.support.IntegrationTest;
  * PENDING 스위퍼. (SPEC §8.2)
  *
  * <p>스프링이 관리하는 {@link PendingUploadSweeper} 빈을 쓰지 않고 <b>직접 생성</b>한다.
- * 이 빈은 {@link flow.test.serverdev.storage.ObjectStorage} 빈이 있어야만 등록되도록
- * 게이팅되어 있는데(아직 그 배선이 없다), 여기서는 {@link FakeObjectStorage} 로 그
- * 협력자만 바꿔 끼우고 나머지(리포지토리, DB)는 {@link IntegrationTest} 의 실제 Postgres
- * 를 그대로 쓴다. {@code MinioObjectStorageTest} 가 {@link flow.test.serverdev.storage.MinioObjectStorage}
- * 를 직접 생성해 쓰는 것과 같은 이유다 — 스프링 배선 여부와 무관하게 이 클래스의 로직만
- * 검증한다.
+ * 검증 대상이 이 클래스의 로직이라, 협력자({@link FakeObjectStorage})와 설정(임계·배치 크기)을
+ * 테스트마다 바꿔 끼워야 하기 때문이다. 삭제 실패는 실물 MinIO 에 명령할 수 없고, 임계 경계는
+ * 주기 설정을 테스트가 정해야 볼 수 있다. 나머지(리포지토리, DB)는 {@link IntegrationTest} 의
+ * 실제 Postgres 를 그대로 쓴다 — 트리거와 CHECK 제약이 이 전이를 실제로 허용하는지까지 함께
+ * 확인해야 한다. {@code MinioObjectStorageTest} 가 {@link flow.test.serverdev.storage.MinioObjectStorage}
+ * 를 직접 생성해 쓰는 것과 같은 이유다.
+ *
+ * <p><b>배선 자체는 여기서 검증하지 않는다.</b> 빈 등록과 스케줄 등록은
+ * {@link PendingUploadSweeperWiringTest}, 스케줄이 실제로 발화하는지는
+ * {@link PendingUploadSweeperScheduleTest} 가 맡는다 — 이 셋을 한 파일에 섞으면
+ * "로직은 맞는데 아무도 부르지 않는" 상태를 다시 놓친다.
  */
 @DisplayName("PENDING 스위퍼")
 class PendingUploadSweeperTest extends IntegrationTest {
