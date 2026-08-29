@@ -43,6 +43,17 @@ class FileIdMigrationTest {
 	private static final UUID ALLOWED_UUID = UUID.fromString("3f2a9c14-0b7d-4a51-9e88-2c1d5b6f7a30");
 	private static final UUID ERROR_UUID = UUID.fromString("7c4e1b02-9d63-4f28-8a15-6e0b3c9d4f11");
 
+	/**
+	 * ★ 36자인데 UUID 가 아닌 키. <b>문자 집합만 보는 판별을 통과한다.</b>
+	 *
+	 * <p>하이픈만 36개도, 하이픈 없는 16진수 36자도 {@code [0-9a-f-]} 안에 있다. 통과시켜
+	 * 놓고 {@code ::uuid} 로 캐스팅하면 거기서 터지고 <b>마이그레이션이 배포 도중 멈춘다.</b>
+	 * V2 는 {@code stored_key} 에 임의의 문자열을 허용하므로, 이런 행은 옛 스키마에서
+	 * 완전히 정상인 데이터다 — 지어낸 상황이 아니다.
+	 */
+	private static final String ALL_HYPHENS = "-".repeat(36);
+	private static final String NO_HYPHENS = "abcdef".repeat(6);
+
 	static Connection connection;
 
 	@BeforeAll
@@ -63,8 +74,10 @@ class FileIdMigrationTest {
 			  ('no-key.pdf',  'ERROR',   'STORAGE_UNAVAILABLE',    NULL),
 			  ('legacy.pdf',  'PENDING', NULL,                     '2026/08/29/legacy-key'),
 			  ('ok.pdf',      'ALLOWED', NULL,                     '2026/08/29/%s'),
-			  ('failed.pdf',  'ERROR',   'STORAGE_UNAVAILABLE',    '2026/08/29/%s')
-			""".formatted(ALLOWED_UUID, ERROR_UUID));
+			  ('failed.pdf',  'ERROR',   'STORAGE_UNAVAILABLE',    '2026/08/29/%s'),
+			  ('hyphens.pdf', 'ALLOWED', NULL,                     '2026/08/29/%s'),
+			  ('nodash.pdf',  'ALLOWED', NULL,                     '2026/08/29/%s')
+			""".formatted(ALLOWED_UUID, ERROR_UUID, ALL_HYPHENS, NO_HYPHENS));
 
 		Flyway.configure()
 			.dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
@@ -100,6 +113,27 @@ class FileIdMigrationTest {
 	@DisplayName("UUID 를 읽어낼 수 없는 키에는 새 값을 만든다")
 	void generatesForUnparseableKey() throws SQLException {
 		assertThat(fileIdOf("legacy.pdf")).isNotNull();
+	}
+
+	/**
+	 * ★ 외부 리뷰(Codex) P1 회귀. 판별이 문자 집합만 보면 캐스팅에서 터져
+	 * <b>마이그레이션이 배포 도중 멈춘다.</b> 형식이 어긋나면 새 UUID 를 만드는 분기가
+	 * 이미 있으므로, 판별만 정확해지면 결과는 안전하다.
+	 *
+	 * <p>이 테스트가 지키는 것은 값 하나가 아니라 <b>{@code @BeforeAll} 이 끝까지 도는가</b>
+	 * 이기도 하다. 마이그레이션이 멈추면 이 클래스의 모든 테스트가 함께 죽는다.
+	 */
+	@Test
+	@DisplayName("36자이지만 UUID 가 아닌 키에도 새 값을 만든다 — 캐스팅에서 멈추지 않는다")
+	void generatesForUuidShapedButInvalidKey() throws SQLException {
+		assertThat(fileIdOf("hyphens.pdf"))
+			.as("하이픈 36개. 문자 집합만 보는 판별은 통과하지만 UUID 가 아니다")
+			.isNotNull()
+			.isNotEqualTo(ALL_HYPHENS);
+		assertThat(fileIdOf("nodash.pdf"))
+			.as("하이픈 없는 16진수 36자. 역시 문자 집합만 보면 통과한다")
+			.isNotNull()
+			.isNotEqualTo(NO_HYPHENS);
 	}
 
 	@Test

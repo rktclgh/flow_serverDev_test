@@ -27,10 +27,23 @@ ALTER TABLE upload_audit ADD COLUMN file_id UUID;
 --
 --    키 끝 36자가 UUID 모양이면 그것을 그대로 쓴다. 새로 만들면 이미 저장된 객체와 행이
 --    가리키는 식별자가 어긋나 다운로드가 조용히 404 가 된다.
+--
+--    ★ 판별은 문자 집합이 아니라 자리까지 본다.
+--
+--      '^[0-9a-f-]{36}$' 로 쓰면 하이픈 36개도, 하이픈 없는 16진수 36자도 통과한다.
+--      그 값에 ::uuid 를 걸면 캐스팅이 실패하고 이 마이그레이션이 배포 도중 멈춘다.
+--      V2 는 stored_key 에 임의의 문자열을 허용하므로 그런 행은 옛 스키마에서 완전히
+--      정상인 데이터다 — 없을 리 없다고 가정할 근거가 없다.
+--
+--      형식이 어긋나면 새 UUID 를 만드는 분기가 아래에 이미 있다. 판별만 정확해지면
+--      결과는 안전하다 — 막을 것을 늘리는 게 아니라 이미 있는 안전한 길로 보내는 것이다.
+--      (외부 리뷰 Codex P1)
 UPDATE upload_audit
    SET file_id = CASE
        WHEN stored_key IS NULL THEN NULL
-       WHEN right(stored_key, 36) ~ '^[0-9a-f-]{36}$' THEN right(stored_key, 36)::uuid
+       WHEN right(stored_key, 36) ~
+            '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN right(stored_key, 36)::uuid
        ELSE gen_random_uuid()
    END
  WHERE file_id IS NULL;
