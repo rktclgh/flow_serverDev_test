@@ -66,3 +66,14 @@ export interface UploadedFile {
 export interface FileListResponse {
   files: UploadedFile[]
 }
+
+/**
+ * 여러 건 삭제의 건별 결과.
+ *
+ * `notFound` 에는 지울 수 없었던 모든 경우가 들어간다 — 없던 id, 이미 지운 파일,
+ * 차단돼 저장된 적 없는 기록. 서버가 셋을 구분해 답하지 않는 것은 의도다.
+ */
+export interface BulkDeleteResponse {
+  deleted: string[]
+  notFound: string[]
+}

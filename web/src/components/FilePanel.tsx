@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { deleteFile, fetchFiles, fileContentUrl } from '../api/files'
+import { deleteFile, deleteFiles, fetchFiles, fileContentUrl } from '../api/files'
 import { ApiFailure, type UploadedFile } from '../api/types'
 import { messageFor, toneFor } from '../messages'
 import { useUploadQueue } from '../store/uploadQueue'
@@ -91,6 +91,8 @@ export function FilePanel({ hasAdminToken }: Props) {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [loaded, setLoaded] = useState(false)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const succeeded = useUploadQueue((state) => state.succeeded)
 
   /**
@@ -103,10 +105,16 @@ export function FilePanel({ hasAdminToken }: Props) {
   const reload = useCallback(async () => {
     try {
       const response = await fetchFiles()
-      setFiles(response.files ?? [])
+      const next = response.files ?? []
+      setFiles(next)
+      // 목록에서 사라진 것은 선택에서도 뺀다. 남겨두면 "3개 선택" 이라 해놓고
+      // 화면에는 두 개만 체크된 상태가 되고, 삭제 요청에 유령 id 가 실려 간다.
+      const alive = new Set(next.map((file) => file.fileId))
+      setSelected((prev) => new Set([...prev].filter((fileId) => alive.has(fileId))))
     } catch (error) {
       console.warn('[ExtGuard] 업로드된 파일 목록을 불러오지 못했습니다.', error)
       setFiles([])
+      setSelected(new Set())
     } finally {
       setLoaded(true)
     }
@@ -116,6 +124,71 @@ export function FilePanel({ hasAdminToken }: Props) {
   useEffect(() => {
     void reload()
   }, [reload, succeeded])
+
+  const toggle = (fileId: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(fileId)) next.add(fileId)
+      return next
+    })
+  }
+
+  /** 전부 선택돼 있으면 해제, 아니면 전부 선택. 버튼 하나로 양쪽을 다 한다. */
+  const toggleAll = () => {
+    setSelected((prev) =>
+      prev.size === files.length ? new Set() : new Set(files.map((file) => file.fileId)))
+  }
+
+  /**
+   * 고른 것을 한 번에 지운다.
+   *
+   * ★ 200 을 받아도 전부 지워졌다는 뜻이 아니다. 목록이 낡아 이미 없는 파일을 고르는
+   * 일은 정상적으로 일어나므로, notFound 를 그대로 사용자에게 알린다. "삭제했어요" 로
+   * 뭉뚱그리면 지워지지 않은 것이 있는데도 지워졌다고 믿게 된다.
+   */
+  const onDeleteSelected = async () => {
+    const targets = files.filter((file) => selected.has(file.fileId))
+    if (targets.length === 0) return
+
+    const preview = targets.length === 1
+      ? `'${targets[0].originalFilename}' 을`
+      : `'${targets[0].originalFilename}' 외 ${targets.length - 1}개를`
+    if (!window.confirm(`${preview} 삭제할까요?\n되돌릴 수 없어요.`)) return
+
+    setBulkDeleting(true)
+    try {
+      const result = await deleteFiles(targets.map((file) => file.fileId))
+      const gone = result.deleted?.length ?? 0
+      const missing = result.notFound?.length ?? 0
+
+      if (gone === 0) {
+        pushToast({ tone: 'info', title: '삭제', body: '고른 파일이 이미 없어요.' })
+      } else {
+        pushToast({
+          tone: missing > 0 ? 'info' : 'success',
+          title: '삭제',
+          body: missing > 0
+            ? `${gone}개를 삭제했어요. ${missing}개는 이미 없었어요.`
+            : `${gone}개를 삭제했어요.`,
+        })
+      }
+    } catch (failure) {
+      if (failure instanceof ApiFailure) {
+        pushToast({
+          tone: toneFor(failure.code),
+          title: '삭제',
+          body: messageFor(failure.code, failure.status),
+        })
+      } else {
+        pushToast({ tone: 'error', title: '삭제', body: '요청을 보내지 못했어요.' })
+      }
+    } finally {
+      setBulkDeleting(false)
+      setSelected(new Set())
+      // 성공이든 실패든 서버 상태로 맞춘다. 단건 삭제와 같은 이유다.
+      await reload()
+    }
+  }
 
   const onDelete = async (file: UploadedFile) => {
     // 되돌릴 수 없다. 카드 하나 차이로 다른 파일을 지우는 일이 없게 이름을 문장에 넣는다.
@@ -147,13 +220,65 @@ export function FilePanel({ hasAdminToken }: Props) {
       <h2>업로드된 파일</h2>
       <p className="muted">카드를 누르면 내려받아요. 삭제는 관리 토큰이 필요해요.</p>
 
+      {/*
+        선택 도구는 지울 게 있을 때만 보여준다. 빈 목록 위에 "전체 선택" 이 떠 있으면
+        누를 수 있을 것처럼 보이는데 아무 일도 일어나지 않는다.
+      */}
+      {files.length > 0 && (
+        <div className="file-tools">
+          <label className="select-all">
+            <input
+              type="checkbox"
+              checked={selected.size === files.length}
+              // 일부만 고른 상태를 체크박스 스스로 표현하게 한다. 체크도 해제도 아닌
+              // 세 번째 상태가 있어야 "전체 선택" 이 지금 무엇을 할지 읽힌다.
+              ref={(node) => {
+                if (node) node.indeterminate = selected.size > 0 && selected.size < files.length
+              }}
+              disabled={!hasAdminToken || bulkDeleting}
+              onChange={toggleAll}
+            />
+            전체 선택
+          </label>
+
+          <span className="muted">
+            {selected.size > 0 ? `${selected.size}개 선택` : `${files.length}개`}
+          </span>
+
+          <button
+            type="button"
+            className="bulk-delete"
+            disabled={!hasAdminToken || selected.size === 0 || bulkDeleting}
+            title={hasAdminToken ? '고른 파일 삭제' : '관리 토큰을 저장해야 삭제할 수 있어요'}
+            onClick={() => void onDeleteSelected()}
+          >
+            {bulkDeleting ? '삭제하는 중…' : '선택 삭제'}
+          </button>
+        </div>
+      )}
+
       {!loaded && <p className="muted">불러오는 중…</p>}
       {loaded && files.length === 0 && <p className="muted">아직 올린 파일이 없어요.</p>}
 
       {files.length > 0 && (
         <ul className="file-grid">
           {files.map((file) => (
-            <li key={file.fileId} className="file-card">
+            <li
+              key={file.fileId}
+              className={selected.has(file.fileId) ? 'file-card selected' : 'file-card'}
+            >
+              {/*
+                체크박스도 삭제 버튼과 마찬가지로 링크 <b>밖</b>에 둔다. 안에 넣으면
+                고르려던 클릭이 다운로드까지 발동한다.
+              */}
+              <input
+                type="checkbox"
+                className="file-select"
+                checked={selected.has(file.fileId)}
+                disabled={!hasAdminToken || bulkDeleting}
+                aria-label={`${file.originalFilename} 선택`}
+                onChange={() => toggle(file.fileId)}
+              />
               {/*
                 카드 본체가 곧 다운로드 링크다. 삭제 버튼은 이 링크 <b>밖</b>에 두고 위에 얹는다 —
                 링크 안에 버튼을 넣으면 마크업이 어긋나고, 지우려던 클릭이 다운로드까지 발동한다.
@@ -169,7 +294,7 @@ export function FilePanel({ hasAdminToken }: Props) {
               <button
                 type="button"
                 className="file-delete"
-                disabled={!hasAdminToken || deleting === file.fileId}
+                disabled={!hasAdminToken || bulkDeleting || deleting === file.fileId}
                 title={hasAdminToken ? '삭제' : '관리 토큰을 저장해야 삭제할 수 있어요'}
                 aria-label={
                   hasAdminToken
