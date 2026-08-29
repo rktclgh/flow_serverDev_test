@@ -48,7 +48,7 @@ docker compose down -v
 
 로컬에서는 `docker-compose.yml` 의 기본 토큰이 그대로 쓰입니다.
 
-```
+```text
 local-demo-token-do-not-use-in-production
 ```
 
@@ -148,7 +148,7 @@ IP 별 시도 횟수를 세는 것 자체가 불가능해집니다. `INET` 은 �
 **두 단계 기록** — Postgres 와 MinIO 에 걸친 원자성은 2PC 없이 성립하지 않습니다. 대신 순서를
 뒤집어 "가장 흔한 실패에서 찌꺼기가 남지 않게" 만들었습니다.
 
-```
+```text
 ① INSERT (PENDING, stored_key) 커밋   → DB 장애면 여기서 끝. MinIO 미접촉
 ② MinIO PUT                          → 실패면 UPDATE(ERROR)
 ③ UPDATE (ALLOWED) 커밋               → 실패면 PENDING 유지 (지우지 않는다)
@@ -240,7 +240,7 @@ curl -i -X POST http://localhost:8080/api/files -F "file=@disguised.txt"
 
 ## 프로젝트 구조
 
-```
+```text
 extension/                     Spring Boot (Java 21, Gradle Kotlin DSL)
   src/main/java/flow/test/serverdev/
     policy/                    확장자 정책 — 정규화, 슬롯 할당, 정책 조회/변경
@@ -295,15 +295,22 @@ H2 를 쓰지 않는 이유는 이 프로젝트의 불변식이 대부분 DB 제
 H2 는 그것들을 지원하지 않아 스키마가 두 벌이 되고, 그러면 테스트가 통과해도 운영에서 지켜지는지
 알 수 없게 됩니다.
 
-정상 종료되면 Ryuk 이 컨테이너를 회수하지만, 테스트를 중간에 끊으면 남습니다. 남은 것만
-골라 지웁니다.
+정상 종료되면 Ryuk 이 컨테이너를 회수하지만, 테스트를 중간에 끊으면 남습니다. 먼저 무엇이
+남았는지 봅니다.
 
 ```bash
-docker rm -f $(docker ps -aq --filter "label=org.testcontainers") 2>/dev/null || true
+docker ps -a --filter "label=org.testcontainers" --format "{{.ID}}\t{{.Image}}\t{{.Status}}"
 ```
 
-> `docker volume prune` 이나 `docker system prune -a` 는 쓰지 마세요. 라벨로 걸러지지 않아
-> 이 프로젝트와 무관한 볼륨·이미지까지 함께 지웁니다.
+목록을 확인한 뒤, **더 이상 쓰이지 않는 것만** 골라 지웁니다.
+
+```bash
+docker rm -f <위에서 확인한 컨테이너 ID>
+```
+
+> 라벨로 한 번에 지우지 마세요. 같은 머신에서 다른 프로젝트의 테스트가 돌고 있으면
+> 그 컨테이너도 같은 라벨을 답니다. 남의 테스트를 중간에 끊게 됩니다.
+> 같은 이유로 `docker volume prune` 과 `docker system prune -a` 도 쓰지 않습니다.
 
 ---
 
