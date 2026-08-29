@@ -21,6 +21,10 @@ import flow.test.serverdev.storage.StorageObjectNotFoundException;
  * 상태를 보고 거르면, 그 분기를 지워도 "객체가 없어서" 404 가 나오는 경우가 많아 방어가
  * 사라진 것을 아무도 눈치채지 못한다.
  *
+ * <p><b>지운 파일도 마찬가지다.</b> {@code deleted_at IS NULL} 을 조건에 넣지 않아도 대개는
+ * 객체가 없어 404 가 나오지만, 그것은 우연이다 — 객체 삭제가 실패한 행에서는 지운 파일이
+ * 그대로 내려간다. 조건이 쿼리에 있으면 그런 행은 애초에 손에 들어오지 않는다.
+ *
  * <p>{@code PENDING}·{@code ERROR}·{@code BLOCKED} 를 상태별로 구분해 답하지 않는다.
  * 응답이 다르면 그 차이만으로 <b>"그 식별자는 존재하지만 차단됐다" 를 알아낼 수 있다.</b>
  * 감사 기록의 내용은 관리자의 것이지 요청자의 것이 아니다.
@@ -39,7 +43,8 @@ public class FileDownloadService {
 	}
 
 	public StoredFile load(UUID fileId) {
-		UploadAudit audit = repository.findByFileIdAndResult(fileId, UploadResult.ALLOWED)
+		UploadAudit audit = repository
+			.findByFileIdAndResultAndDeletedAtIsNull(fileId, UploadResult.ALLOWED)
 			.orElseThrow(() -> notFound(fileId));
 
 		try {

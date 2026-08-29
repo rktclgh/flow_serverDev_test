@@ -142,6 +142,80 @@ class AdminTokenFilterTest {
 		}
 	}
 
+	/**
+	 * 파일 삭제는 <b>파괴적</b>이라 정책 변경과 같은 등급으로 다룬다.
+	 *
+	 * <p>업로드·조회·다운로드는 공개다 — 과제가 "누구나 접속 가능" 을 요구하는 것은 그쪽이다.
+	 * 삭제까지 공개로 두면 누구나 남의 파일을 지울 수 있고, 그러면 목록도 다운로드도
+	 * 의미가 없어진다. <b>같은 경로 접두사에서 메서드만 갈라진다.</b>
+	 */
+	@Nested
+	@DisplayName("파일 삭제 — DELETE 만 보호한다")
+	class FileDeletion {
+
+		private static final String FILE = "/api/files/9f2c8a1e-0000-0000-0000-000000000000";
+
+		@Test
+		@DisplayName("토큰 없는 DELETE 는 거부한다")
+		void deleteRequiresToken() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "DELETE", FILE, null);
+
+			assertThat(response.getStatus()).isEqualTo(401);
+			assertThat(response.getContentAsString()).contains("ADMIN_TOKEN_REQUIRED");
+		}
+
+		@Test
+		@DisplayName("틀린 토큰의 DELETE 는 거부한다")
+		void deleteRejectsWrongToken() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "DELETE", FILE, "wrong");
+
+			assertThat(response.getStatus()).isEqualTo(401);
+			assertThat(response.getContentAsString()).contains("ADMIN_TOKEN_INVALID");
+		}
+
+		@Test
+		@DisplayName("올바른 토큰의 DELETE 는 통과한다")
+		void deleteWithToken() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "DELETE", FILE, VALID_TOKEN);
+
+			assertThat(response.getStatus()).isEqualTo(200);
+		}
+
+		@Test
+		@DisplayName("업로드(POST)는 여전히 공개다")
+		void uploadStaysPublic() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "POST", "/api/files", null);
+
+			assertThat(response.getStatus()).isEqualTo(200);
+		}
+
+		@Test
+		@DisplayName("목록(GET)은 여전히 공개다")
+		void listStaysPublic() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "GET", "/api/files", null);
+
+			assertThat(response.getStatus()).isEqualTo(200);
+		}
+
+		/**
+		 * 미설정일 때도 fail-closed 다. 관리 기능이 <b>인증 없음</b>으로 조용히 전락하는 것을
+		 * 막는 규칙이 삭제에도 그대로 적용돼야 한다.
+		 */
+		@Test
+		@DisplayName("토큰 미설정이면 삭제도 거부한다 — fail-closed")
+		void unsetTokenBlocksDelete() throws Exception {
+			MockHttpServletResponse response = run(new AdminTokenFilter(""), "DELETE", FILE, null);
+
+			assertThat(response.getStatus()).isEqualTo(401);
+			assertThat(response.getContentAsString()).contains("ADMIN_TOKEN_NOT_CONFIGURED");
+		}
+	}
+
 	/** 필터를 한 번 통과시킨다. 체인까지 갔으면 상태가 200 으로 남는다. */
 	private MockHttpServletResponse run(AdminTokenFilter filter, String method, String uri,
 			String token) throws Exception {

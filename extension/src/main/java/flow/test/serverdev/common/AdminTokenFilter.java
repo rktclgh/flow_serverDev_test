@@ -30,7 +30,15 @@ import jakarta.servlet.http.HttpServletResponse;
 public class AdminTokenFilter extends OncePerRequestFilter {
 
 	private static final String HEADER = "X-Admin-Token";
-	private static final String PROTECTED_PREFIX = "/api/extensions";
+
+	/** 정책 <b>변경</b>. 조회는 safe method 라 아래에서 통과한다. */
+	private static final String POLICY_PREFIX = "/api/extensions";
+
+	/**
+	 * 파일 API. 여기서는 <b>메서드로 갈린다</b> — {@code DELETE} 만 보호하고
+	 * 업로드({@code POST})·목록·다운로드({@code GET})는 공개로 둔다.
+	 */
+	private static final String FILE_PREFIX = "/api/files";
 
 	/**
 	 * 최소 토큰 길이. SPEC §7.0 이 요구하는 값이며 <b>기동 시점에 강제한다</b>.
@@ -80,7 +88,12 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 		if (SAFE_METHODS.contains(request.getMethod())) {
 			return true;
 		}
-		return !request.getRequestURI().startsWith(PROTECTED_PREFIX);
+		String uri = request.getRequestURI();
+		if (uri.startsWith(POLICY_PREFIX)) {
+			return false;
+		}
+		// 파일은 삭제만 보호한다. POST(업로드)는 공개를 유지해야 한다.
+		return !(uri.startsWith(FILE_PREFIX) && HttpMethod.DELETE.matches(request.getMethod()));
 	}
 
 	@Override
