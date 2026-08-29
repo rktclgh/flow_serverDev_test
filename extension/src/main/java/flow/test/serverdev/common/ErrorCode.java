@@ -80,6 +80,13 @@ public enum ErrorCode {
 	/** 이름이 아니라 <b>내용</b>이 실행 파일이다. 확장자를 바꿔도 통과하지 못한다. */
 	FILE_EXECUTABLE_CONTENT(HttpStatus.UNPROCESSABLE_ENTITY),
 
+	/**
+	 * 크기 상한 초과. multipart 파싱 중에 터지므로 <b>파일명을 알 수 없고, 그래서 감사하지 않는다</b>
+	 * (SPEC §21.2). {@code original_filename} 은 NOT NULL 이라 자리표시자를 넣어야 하는데
+	 * 그러면 감사 데이터가 오염된다.
+	 */
+	FILE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE),
+
 	/** 스토리지가 저장을 거부했다. 객체가 없는 것이 확실하므로 다시 시도하면 된다. */
 	STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE),
 
