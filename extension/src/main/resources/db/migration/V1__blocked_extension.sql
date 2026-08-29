@@ -51,6 +51,14 @@ CREATE TABLE blocked_extension (
         (type = 'FIXED'  AND custom_slot IS NULL)
         OR
         (type = 'CUSTOM' AND custom_slot IS NOT NULL AND custom_slot BETWEEN 1 AND 200)
+    ),
+
+    -- 고정 확장자의 이름을 과제가 지정한 7개로 못박는다.
+    -- 이것이 없으면 type='FIXED' 로 임의의 행을 무한히 추가할 수 있다.
+    -- UNIQUE(name) 과 결합해 FIXED 는 최대 7행이 된다.
+    CONSTRAINT ck_fixed_names CHECK (
+        type <> 'FIXED'
+        OR name IN ('bat', 'cmd', 'com', 'cpl', 'exe', 'scr', 'js')
     )
 );
 
@@ -62,21 +70,21 @@ CREATE INDEX idx_blocked_extension_type ON blocked_extension (type);
 
 -- updated_at 자동 갱신.
 -- DEFAULT now() 만으로는 INSERT 시각만 남고 UPDATE 후에도 그대로다.
-CREATE OR REPLACE FUNCTION set_updated_at() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION extguard_set_updated_at() RETURNS trigger AS $$
 BEGIN
-    NEW.updated_at = now();
+    NEW.updated_at = clock_timestamp();
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_blocked_extension_updated_at
     BEFORE UPDATE ON blocked_extension
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+    FOR EACH ROW EXECUTE FUNCTION extguard_set_updated_at();
 
 
 -- 고정 확장자 삭제 방지.
 -- 애플리케이션에서만 막으면 직접 SQL·배치·새 API 가 우회할 수 있다.
-CREATE OR REPLACE FUNCTION prevent_fixed_delete() RETURNS trigger AS $$
+CREATE OR REPLACE FUNCTION extguard_prevent_fixed_delete() RETURNS trigger AS $$
 BEGIN
     IF OLD.type = 'FIXED' THEN
         RAISE EXCEPTION 'FIXED extension cannot be deleted: %', OLD.name;
@@ -87,7 +95,52 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_blocked_extension_prevent_fixed_delete
     BEFORE DELETE ON blocked_extension
-    FOR EACH ROW EXECUTE FUNCTION prevent_fixed_delete();
+    FOR EACH ROW EXECUTE FUNCTION extguard_prevent_fixed_delete();
+
+
+-- 고정 확장자 행의 변조 방지.
+--
+-- 삭제 트리거만으로는 부족하다. OLD.type 만 검사하므로 다음 순서로 우회된다.
+--   UPDATE blocked_extension SET type='CUSTOM', custom_slot=1 WHERE name='exe';
+--   DELETE FROM blocked_extension WHERE name='exe';   -- 이미 CUSTOM 이라 통과
+-- ON CONFLICT (name) DO UPDATE 로도 같은 변환이 가능하다.
+--
+-- 고정 확장자에서 바뀌어도 되는 것은 is_blocked(체크/해제) 뿐이다.
+CREATE OR REPLACE FUNCTION extguard_protect_fixed_row() RETURNS trigger AS $$
+BEGIN
+    IF OLD.type = 'FIXED' THEN
+        IF NEW.name <> OLD.name
+           OR NEW.type <> OLD.type
+           OR NEW.custom_slot IS DISTINCT FROM OLD.custom_slot THEN
+            RAISE EXCEPTION 'FIXED extension is immutable except is_blocked: %', OLD.name;
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_blocked_extension_protect_fixed_row
+    BEFORE UPDATE ON blocked_extension
+    FOR EACH ROW EXECUTE FUNCTION extguard_protect_fixed_row();
+
+
+-- TRUNCATE 차단.
+--
+-- TRUNCATE 는 행 단위 DELETE 트리거를 실행하지 않으므로 고정 7개가 통째로 사라진다.
+-- 문 단위 BEFORE TRUNCATE 트리거로 막는다.
+--
+-- 한계: 테이블 소유자는 트리거를 비활성화하거나 제약을 제거할 수 있다.
+-- 완전한 방어는 마이그레이션 계정과 런타임 계정을 분리하고
+-- 런타임 역할에서 DDL/TRUNCATE 권한을 회수하는 것이다 — CONSIDERATIONS.md 참조.
+CREATE OR REPLACE FUNCTION extguard_prevent_truncate() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'blocked_extension cannot be truncated';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_blocked_extension_prevent_truncate
+    BEFORE TRUNCATE ON blocked_extension
+    FOR EACH STATEMENT EXECUTE FUNCTION extguard_prevent_truncate();
 
 
 -- 고정 확장자 시드. 과제가 지정한 순서를 id 순서로 보존한다(화면 표시 순서).
