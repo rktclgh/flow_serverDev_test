@@ -91,6 +91,19 @@ public class UploadAudit {
 	@Column(name = "file_id", updatable = false)
 	private UUID fileId;
 
+	/**
+	 * 객체를 지운 시각. {@code NULL} 이면 살아 있는 파일이다. (V4)
+	 *
+	 * <p><b>행은 지우지 않는다.</b> 삭제도 일어난 일이고, 행을 지우면 "무엇이 왜 올라갔는가"
+	 * 를 함께 잃는다 — 그것이 이 서비스의 존재 이유다.
+	 *
+	 * <p>setter 를 두지 않는다. 삭제는 {@link UploadAuditRepository#markDeleted} 의
+	 * <b>조건부 UPDATE</b> 로만 일어난다. 읽고 나서 판단하고 쓰는 경로를 열어두면 그 사이에
+	 * 다른 요청이 끼어들 창이 생기고, 그러면 같은 객체를 두 번 지우려 든다.
+	 */
+	@Column(name = "deleted_at")
+	private OffsetDateTime deletedAt;
+
 	protected UploadAudit() {
 		// JPA
 	}
@@ -212,5 +225,9 @@ public class UploadAudit {
 
 	public UUID fileId() {
 		return fileId;
+	}
+
+	public OffsetDateTime deletedAt() {
+		return deletedAt;
 	}
 }
