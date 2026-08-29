@@ -24,6 +24,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import flow.test.serverdev.common.ErrorCode;
 import flow.test.serverdev.common.PolicyException;
 import flow.test.serverdev.support.IntegrationTest;
+import flow.test.serverdev.support.PolicyFixture;
 
 /**
  * 동시성과 멱등. (SPEC §8.1)
@@ -57,8 +58,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 
 	@BeforeEach
 	void reset() {
-		jdbc.update("DELETE FROM blocked_extension WHERE type = 'CUSTOM'");
-		jdbc.update("UPDATE blocked_extension SET is_blocked = FALSE WHERE type = 'FIXED'");
+		PolicyFixture.reset(jdbc);
 	}
 
 	@Nested
@@ -83,7 +83,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 		@Test
 		@DisplayName("빈 슬롯이 1개일 때 서로 다른 이름을 동시에 추가하면 1개만 성공한다")
 		void lastSlotIsContended() throws Exception {
-			fillCustomSlots(199);
+			PolicyFixture.fillCustomSlots(jdbc, 199);
 
 			List<Runnable> attempts = IntStream.range(0, THREADS)
 				.<Runnable>mapToObj(i -> () -> service.addCustom("race" + i))
@@ -194,7 +194,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 		@Test
 		@DisplayName("추가·삭제·토글을 뒤섞어 돌려도 슬롯 불변식이 유지된다")
 		void slotInvariantsSurviveChurn() throws Exception {
-			fillCustomSlots(50);
+			PolicyFixture.fillCustomSlots(jdbc, 50);
 
 			List<Runnable> attempts = new ArrayList<>();
 			for (int i = 0; i < 6; i++) {
@@ -292,11 +292,4 @@ class PolicyConcurrencyTest extends IntegrationTest {
 			"SELECT is_blocked FROM blocked_extension WHERE name = ?", Boolean.class, name);
 	}
 
-	private void fillCustomSlots(int count) {
-		jdbc.batchUpdate(
-			"INSERT INTO blocked_extension (name, type, is_blocked, custom_slot) VALUES (?, 'CUSTOM', TRUE, ?)",
-			IntStream.rangeClosed(1, count)
-				.mapToObj(i -> new Object[] { "c%03d".formatted(i), (short) i })
-				.toList());
-	}
 }
