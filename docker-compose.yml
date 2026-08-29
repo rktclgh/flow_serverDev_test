@@ -6,7 +6,7 @@
 
 services:
   db:
-    image: postgres:18-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-extguard}
       POSTGRES_USER: ${POSTGRES_USER:-extguard}

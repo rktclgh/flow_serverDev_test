@@ -23,7 +23,7 @@ public abstract class IntegrationTest {
 	public static final String ADMIN_TOKEN = "test-admin-token-0123456789abcdef";
 
 	@ServiceConnection
-	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine");
+	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(TestImages.POSTGRES);
 
 	static {
 		POSTGRES.start();
