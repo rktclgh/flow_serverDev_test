@@ -40,6 +40,13 @@ FROM eclipse-temurin:21-jre-alpine AS runtime
 RUN addgroup -S app && adduser -S app -G app
 
 WORKDIR /app
+
+# 저장 키의 날짜 프리픽스가 이 시간대를 따른다(SPEC §10.4 아래, StorageConfig#clock).
+# 이 줄이 없으면 컨테이너는 UTC 로 뜬다 — 호스트가 서울이어도 그렇다. 실측으로 확인했고,
+# 그대로 두면 한국 시간 오전 0~9시 업로드가 전날 프리픽스로 조용히 들어간다.
+# alpine 에 tzdata 가 이미 있어 별도 설치가 필요 없다.
+ENV TZ=Asia/Seoul
+
 COPY --from=build /src/build/libs/*.jar app.jar
 USER app
 
