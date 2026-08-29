@@ -10,6 +10,10 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
@@ -198,6 +202,143 @@ class SchemaConstraintTest {
 			assertThatThrownBy(() -> execute(
 				"INSERT INTO blocked_extension (name, type, is_blocked, custom_slot) VALUES ('zz','CUSTOM',FALSE,1)"))
 				.isInstanceOf(SQLException.class);
+		}
+	}
+
+	@Nested
+	@DisplayName("우회 시도 차단")
+	class BypassAttempts {
+
+		// 아래 시나리오는 모두 외부 리뷰에서 지적받아 실제 Postgres 18 에서 재현한 뒤 막은 것들이다.
+		// 삭제 트리거 하나로는 고정 확장자를 지킬 수 없었다.
+
+		@Test
+		@DisplayName("고정 확장자 이름이 아닌 행을 FIXED 로 추가할 수 없다")
+		void 고정_임의_추가_차단() {
+			// 이것이 막히지 않으면 type='FIXED' 로 임의의 행을 무한히 넣을 수 있다.
+			assertThatThrownBy(() -> execute(
+				"INSERT INTO blocked_extension (name, type, is_blocked) VALUES ('zzz','FIXED',TRUE)"))
+				.isInstanceOf(SQLException.class);
+			assertThatThrownBy(() -> execute(
+				"INSERT INTO blocked_extension (name, type, is_blocked) "
+					+ "SELECT 'x'||n, 'FIXED', TRUE FROM generate_series(1,201) g(n)"))
+				.isInstanceOf(SQLException.class);
+		}
+
+		@Test
+		@DisplayName("고정 확장자를 CUSTOM 으로 바꿔 삭제 트리거를 우회할 수 없다")
+		void 타입_변경_우회_차단() {
+			// 삭제 트리거는 OLD.type 만 본다. 먼저 CUSTOM 으로 바꾸면 그 다음 DELETE 가 통과한다.
+			assertThatThrownBy(() -> execute(
+				"UPDATE blocked_extension SET type='CUSTOM', custom_slot=1 WHERE name='exe'"))
+				.isInstanceOf(SQLException.class)
+				.hasMessageContaining("immutable");
+		}
+
+		@Test
+		@DisplayName("고정 확장자의 이름을 바꿀 수 없다")
+		void 이름_변경_차단() {
+			assertThatThrownBy(() -> execute(
+				"UPDATE blocked_extension SET name='zip' WHERE name='exe'"))
+				.isInstanceOf(SQLException.class);
+		}
+
+		@Test
+		@DisplayName("ON CONFLICT DO UPDATE 로도 고정 확장자를 변조할 수 없다")
+		void upsert_변조_차단() {
+			assertThatThrownBy(() -> execute(
+				"INSERT INTO blocked_extension (name,type,is_blocked,custom_slot) "
+					+ "VALUES ('bat','CUSTOM',TRUE,2) ON CONFLICT (name) DO UPDATE "
+					+ "SET type=EXCLUDED.type, custom_slot=EXCLUDED.custom_slot"))
+				.isInstanceOf(SQLException.class);
+		}
+
+		@Test
+		@DisplayName("TRUNCATE 로 정책 전체를 지울 수 없다")
+		void truncate_차단() {
+			// TRUNCATE 는 행 단위 DELETE 트리거를 실행하지 않는다. 문 단위 트리거가 필요하다.
+			assertThatThrownBy(() -> execute("TRUNCATE blocked_extension"))
+				.isInstanceOf(SQLException.class)
+				.hasMessageContaining("truncated");
+		}
+
+		@Test
+		@DisplayName("고정 확장자의 is_blocked 토글은 정상 허용된다")
+		void 정상_토글은_허용() throws SQLException {
+			// 위 제약들이 정상 동작까지 막으면 안 된다.
+			execute("UPDATE blocked_extension SET is_blocked = TRUE WHERE name='exe'");
+			assertThat(count("name='exe' AND is_blocked = TRUE")).isEqualTo(1);
+		}
+	}
+
+	@Nested
+	@DisplayName("동시성")
+	class Concurrency {
+
+		/** 서로 다른 커넥션으로 동시에 실행한다. 단일 커넥션 순차 INSERT 로는 경쟁을 재현할 수 없다. */
+		private List<Throwable> runConcurrently(int threads, String sqlTemplate) throws Exception {
+			ExecutorService pool = Executors.newFixedThreadPool(threads);
+			CountDownLatch ready = new CountDownLatch(threads);
+			CountDownLatch start = new CountDownLatch(1);
+			List<Future<Throwable>> futures = new ArrayList<>();
+
+			for (int i = 0; i < threads; i++) {
+				final int index = i;
+				futures.add(pool.submit(() -> {
+					try (Connection own = DriverManager.getConnection(
+						POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
+						 Statement statement = own.createStatement()) {
+						ready.countDown();
+						start.await();
+						statement.execute(sqlTemplate.formatted(index));
+						return null;
+					}
+					catch (Throwable failure) {
+						return failure;
+					}
+				}));
+			}
+			ready.await();
+			start.countDown();
+
+			List<Throwable> failures = new ArrayList<>();
+			for (Future<Throwable> future : futures) {
+				Throwable failure = future.get();
+				if (failure != null) {
+					failures.add(failure);
+				}
+			}
+			pool.shutdown();
+			return failures;
+		}
+
+		@Test
+		@DisplayName("같은 이름을 동시에 추가하면 하나만 성공한다")
+		void 이름_경쟁() throws Exception {
+			int threads = 8;
+			// 슬롯은 다르게, 이름은 같게 — UNIQUE(name) 만으로 경쟁을 판정한다.
+			List<Throwable> failures = runConcurrently(threads,
+				"INSERT INTO blocked_extension (name,type,is_blocked,custom_slot) "
+					+ "VALUES ('dup','CUSTOM',TRUE,%d + 1)");
+
+			assertThat(count("name='dup'")).as("한 건만 저장되어야 한다").isEqualTo(1);
+			assertThat(failures).as("나머지는 제약 위반으로 실패해야 한다").hasSize(threads - 1);
+		}
+
+		@Test
+		@DisplayName("★ 200개 경계에서 동시에 밀어넣어도 201개가 되지 않는다")
+		void 상한_경쟁() throws Exception {
+			// 199개를 채운 뒤 남은 슬롯 1개를 여러 스레드가 동시에 노린다.
+			for (int slot = 1; slot <= 199; slot++) {
+				insertCustom("y%d".formatted(slot), slot);
+			}
+			int threads = 8;
+			List<Throwable> failures = runConcurrently(threads,
+				"INSERT INTO blocked_extension (name,type,is_blocked,custom_slot) "
+					+ "VALUES ('race%d','CUSTOM',TRUE,200)");
+
+			assertThat(count("type='CUSTOM'")).as("200 을 넘을 수 없다").isEqualTo(200);
+			assertThat(failures).hasSize(threads - 1);
 		}
 	}
 
