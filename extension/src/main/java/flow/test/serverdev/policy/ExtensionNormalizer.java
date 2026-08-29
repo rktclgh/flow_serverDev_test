@@ -64,7 +64,14 @@ public class ExtensionNormalizer {
 		}
 
 		// 7. 길이 초과를 형식 오류보다 먼저 판정해 안내를 구분한다.
-		if (value.length() > MAX_LENGTH) {
+		//    코드포인트로 세는 이유가 둘이다.
+		//    - String.length() 는 UTF-16 code unit 수라 서로게이트 페어(이모지 등)를 2로 센다.
+		//      이모지 11개짜리 입력이 22 로 계산되어 TOO_LONG 으로 오분류되고,
+		//      실제 사유("허용되지 않는 문자")가 사용자에게 전달되지 않는다.
+		//    - Postgres 의 VARCHAR(20) 과 CHECK 정규식 {1,20} 은 코드포인트 기준이다.
+		//      length() 를 쓰면 앱과 DB 의 길이 개념이 어긋난다.
+		//    NFKC 가 길이를 늘릴 수 있다는 점도 함께 고려한다 (U+FB01 -> "fi").
+		if (value.codePointCount(0, value.length()) > MAX_LENGTH) {
 			return new NormalizeResult.Rejected(RejectReason.TOO_LONG);
 		}
 
