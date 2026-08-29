@@ -9,8 +9,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.server.PathContainer;
+import org.springframework.http.server.RequestPath;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import org.springframework.web.util.pattern.PathPattern;
+import org.springframework.web.util.pattern.PathPatternParser;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -18,27 +22,60 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
- * 정책 <b>변경</b> API 를 관리 토큰으로 보호한다. (SPEC §7.0)
+ * 파괴적인 API 를 관리 토큰으로 보호한다. (SPEC §7.0)
  *
- * <p>보호 대상은 {@code /api/extensions} 이하의 쓰기 요청뿐이다.
- * 정책 조회와 파일 업로드는 공개다 — 과제의 "누구나 접속 가능" 요구가 그쪽에 걸린다.
+ * <p>보호 대상은 둘이다 — {@code /api/extensions} 이하의 <b>쓰기</b> 요청과,
+ * {@code /api/files} 의 <b>삭제</b>. 정책 조회·파일 업로드·목록·다운로드는 공개다.
+ * 과제의 "누구나 접속 가능" 요구가 그쪽에 걸린다.
  *
  * <p>무인증으로 두면 누구나 {@code exe} 차단을 해제할 수 있어 정책 자체가 무의미해진다.
- * 반면 계정 체계를 도입하는 것은 과제 범위 밖이므로, 토큰 하나로 관리 기능만 분리했다.
+ * 삭제도 같다 — 공개면 누구나 목록을 훑어 남의 파일을 전부 지울 수 있다. 반면 계정 체계를
+ * 도입하는 것은 과제 범위 밖이므로, 토큰 하나로 관리 기능만 분리했다.
+ *
+ * <p><b>경로 판정은 스프링의 매핑 엔진에 맡긴다</b>({@link #POLICY_PATHS} 주석 참고).
+ * 인가하는 쪽과 컨트롤러를 고르는 쪽이 경로를 다르게 읽으면 그 차이가 그대로 우회가 된다.
  */
 @Component
 public class AdminTokenFilter extends OncePerRequestFilter {
 
 	private static final String HEADER = "X-Admin-Token";
 
-	/** 정책 <b>변경</b>. 조회는 safe method 라 아래에서 통과한다. */
-	private static final String POLICY_PREFIX = "/api/extensions";
+	/**
+	 * ★ 경로 판정을 <b>스프링의 매핑 엔진으로</b> 한다. 문자열 {@code startsWith} 가 아니다.
+	 *
+	 * <p>{@code getRequestURI()} 는 <b>디코딩되지 않은 날 것</b>이다. 반면 핸들러 매핑은
+	 * 디코딩된 경로로 컨트롤러를 고른다. 두 시선이 어긋나면 그 틈이 그대로 인가 우회가 된다 —
+	 * 실측했다({@code AdminTokenPathBypassTest}). 옛 구현에서 아래가 <b>토큰 없이</b> 통했다.
+	 *
+	 * <pre>
+	 *   DELETE /api/%66iles/&#123;id&#125;       204, 파일이 실제로 삭제됐다
+	 *   DELETE /%61pi/%66il%65s/&#123;id&#125;  204, 같은 결과
+	 * </pre>
+	 *
+	 * <p>{@code "/api/%66iles/..."} 는 {@code startsWith("/api/files")} 를 통과하지 못해
+	 * 필터가 <b>보호 대상이 아니라고 판단</b>하고, 그 뒤 매핑이 {@code %66} 을 {@code f} 로
+	 * 디코딩해 컨트롤러로 보낸다. 변형을 하나씩 막는 방식으로는 닫을 수 없는 구멍이다 —
+	 * 인코딩 변형은 얼마든지 만들 수 있다. <b>매핑과 같은 눈으로 보는 것</b>만이 답이다.
+	 *
+	 * <p>{@link PathPattern} 은 디스패처가 컨트롤러를 고를 때 쓰는 바로 그 엔진이고,
+	 * {@link RequestPath} 는 세그먼트를 디코딩하고 매트릭스 파라미터를 떼어낸다.
+	 * 그래서 <b>매핑이 받아들이는 모든 형태를 필터도 똑같이 본다.</b>
+	 *
+	 * <p>{@code /}{@code **} 는 <b>0개 이상</b>의 세그먼트를 받으므로 {@code /api/extensions}
+	 * 자체도 보호된다. 덤으로 {@code /api/extensions-foo} 같은 이웃 경로를 잘못 삼키지 않는다 —
+	 * 옛 {@code startsWith} 는 그것까지 보호 대상으로 여겼다.
+	 */
+	private static final PathPattern POLICY_PATHS = parse("/api/extensions/**");
 
 	/**
 	 * 파일 API. 여기서는 <b>메서드로 갈린다</b> — {@code DELETE} 만 보호하고
 	 * 업로드({@code POST})·목록·다운로드({@code GET})는 공개로 둔다.
 	 */
-	private static final String FILE_PREFIX = "/api/files";
+	private static final PathPattern FILE_PATHS = parse("/api/files/**");
+
+	private static PathPattern parse(String pattern) {
+		return PathPatternParser.defaultInstance.parse(pattern);
+	}
 
 	/**
 	 * 최소 토큰 길이. SPEC §7.0 이 요구하는 값이며 <b>기동 시점에 강제한다</b>.
@@ -88,12 +125,17 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 		if (SAFE_METHODS.contains(request.getMethod())) {
 			return true;
 		}
-		String uri = request.getRequestURI();
-		if (uri.startsWith(POLICY_PREFIX)) {
+		// 디스패처가 컨트롤러를 고를 때와 같은 방식으로 경로를 읽는다.
+		// getRequestURI() 를 그대로 쓰면 인코딩된 변형이 이 판정만 비켜 간다.
+		PathContainer path = RequestPath
+			.parse(request.getRequestURI(), request.getContextPath())
+			.pathWithinApplication();
+
+		if (POLICY_PATHS.matches(path)) {
 			return false;
 		}
 		// 파일은 삭제만 보호한다. POST(업로드)는 공개를 유지해야 한다.
-		return !(uri.startsWith(FILE_PREFIX) && HttpMethod.DELETE.matches(request.getMethod()));
+		return !(FILE_PATHS.matches(path) && HttpMethod.DELETE.matches(request.getMethod()));
 	}
 
 	@Override
