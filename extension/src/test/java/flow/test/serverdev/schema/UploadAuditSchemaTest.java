@@ -9,6 +9,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.UUID;
 
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
@@ -142,9 +143,12 @@ class UploadAuditSchemaTest {
 		@Test
 		@DisplayName("ALLOWED 는 저장 키가 반드시 있다")
 		void allowedRequiresKey() {
+			// file_id 는 채운다. 비워두면 file_id 규칙까지 함께 어겨서
+			// 이 테스트가 무엇을 확인한 것인지 흐려진다.
 			assertThatThrownBy(() -> execute("""
-				INSERT INTO upload_audit (original_filename, result) VALUES ('a.pdf', 'ALLOWED')
-				"""))
+				INSERT INTO upload_audit (original_filename, result, file_id)
+				VALUES ('a.pdf', 'ALLOWED', '%s')
+				""".formatted(UUID.randomUUID())))
 				.hasMessageContaining("ck_upload_audit_stored_key");
 		}
 
@@ -152,8 +156,9 @@ class UploadAuditSchemaTest {
 		@DisplayName("PENDING 도 저장 키가 반드시 있다 — 키를 먼저 정하고 저장하기 때문")
 		void pendingRequiresKey() {
 			assertThatThrownBy(() -> execute("""
-				INSERT INTO upload_audit (original_filename, result) VALUES ('a.pdf', 'PENDING')
-				"""))
+				INSERT INTO upload_audit (original_filename, result, file_id)
+				VALUES ('a.pdf', 'PENDING', '%s')
+				""".formatted(UUID.randomUUID())))
 				.hasMessageContaining("ck_upload_audit_stored_key");
 		}
 
@@ -175,6 +180,92 @@ class UploadAuditSchemaTest {
 
 			assertThatThrownBy(() -> insertAllowed("b.pdf", "2026/08/29/same"))
 				.hasMessageContaining("uq_upload_audit_stored_key");
+		}
+	}
+
+	@Nested
+	@DisplayName("file_id — 클라이언트가 지목하는 식별자")
+	class FileId {
+
+		@Test
+		@DisplayName("ALLOWED 는 식별자가 반드시 있다 — 없으면 아무도 그 파일을 지목할 수 없다")
+		void allowedRequiresFileId() {
+			assertThatThrownBy(() -> execute("""
+				INSERT INTO upload_audit (original_filename, result, stored_key)
+				VALUES ('a.pdf', 'ALLOWED', '2026/08/29/f1')
+				"""))
+				.hasMessageContaining("ck_upload_audit_result_file_id");
+		}
+
+		@Test
+		@DisplayName("PENDING 도 식별자가 반드시 있다 — 키와 함께 정해지기 때문")
+		void pendingRequiresFileId() {
+			assertThatThrownBy(() -> execute("""
+				INSERT INTO upload_audit (original_filename, result, stored_key)
+				VALUES ('a.pdf', 'PENDING', '2026/08/29/f2')
+				"""))
+				.hasMessageContaining("ck_upload_audit_result_file_id");
+		}
+
+		@Test
+		@DisplayName("BLOCKED 는 식별자를 가질 수 없다 — 저장하지 않았으므로 내보낼 것이 없다")
+		void blockedForbidsFileId() {
+			assertThatThrownBy(() -> execute("""
+				INSERT INTO upload_audit (original_filename, result, reason_code, file_id)
+				VALUES ('a.exe', 'BLOCKED', 'FILE_BLOCKED_EXTENSION', '%s')
+				""".formatted(UUID.randomUUID())))
+				.hasMessageContaining("ck_upload_audit_result_file_id");
+		}
+
+		/**
+		 * 키가 있다는 것은 객체가 저장됐을 수 있다는 뜻이다. 그런데 식별자가 없으면
+		 * <b>사람이 그 파일을 지목할 방법이 없다</b> — 스위퍼만 키로 접근할 수 있고
+		 * 조회로는 영영 찾지 못한다.
+		 */
+		@Test
+		@DisplayName("키가 있으면 ERROR 라도 식별자가 있어야 한다")
+		void storedKeyImpliesFileId() {
+			assertThatThrownBy(() -> execute("""
+				INSERT INTO upload_audit (original_filename, result, reason_code, stored_key)
+				VALUES ('a.pdf', 'ERROR', 'STORAGE_UNAVAILABLE', '2026/08/29/f3')
+				"""))
+				.hasMessageContaining("ck_upload_audit_stored_key_file_id");
+		}
+
+		@Test
+		@DisplayName("키가 없는 ERROR 는 식별자도 없다 — 저장을 시도조차 못 한 경우다")
+		void keylessErrorNeedsNothing() {
+			assertThatCode(() -> execute("""
+				INSERT INTO upload_audit (original_filename, result, reason_code)
+				VALUES ('a.pdf', 'ERROR', 'STORAGE_UNAVAILABLE')
+				"""))
+				.doesNotThrowAnyException();
+		}
+
+		/** 두 기록이 같은 식별자를 가지면 다운로드가 어느 파일을 내보낼지 알 수 없다. */
+		@Test
+		@DisplayName("같은 식별자를 두 기록이 가질 수 없다")
+		void fileIdIsUnique() throws SQLException {
+			UUID shared = UUID.randomUUID();
+			insertAllowed("a.pdf", "2026/08/29/f4", shared);
+
+			assertThatThrownBy(() -> insertAllowed("b.pdf", "2026/08/29/f5", shared))
+				.hasMessageContaining("uq_upload_audit_file_id");
+		}
+
+		/**
+		 * ★ 트리거의 불변 컬럼 목록에서 빠지면 <b>새 컬럼만 보증 밖으로 샌다.</b>
+		 * 나머지를 아무리 잠가도 "이 기록이 그 파일이다" 를 나중에 고쳐 쓸 수 있으면
+		 * 기록 전체를 믿을 수 없다. {@code reason_code} 가 정확히 그렇게 빠져 있었다.
+		 */
+		@Test
+		@DisplayName("기록된 식별자는 바꿀 수 없다")
+		void fileIdIsImmutable() throws SQLException {
+			insertPending("a.pdf", "2026/08/29/f6");
+
+			assertThatThrownBy(() -> execute(
+				"UPDATE upload_audit SET file_id = '%s'".formatted(UUID.randomUUID())))
+				.hasMessageContaining("cannot change");
 		}
 	}
 
@@ -323,24 +414,32 @@ class UploadAuditSchemaTest {
 	}
 
 	private static void insertPending(String filename, String key) throws SQLException {
+		insertPending(filename, key, UUID.randomUUID());
+	}
+
+	private static void insertPending(String filename, String key, UUID fileId) throws SQLException {
 		execute("""
-			INSERT INTO upload_audit (original_filename, result, stored_key)
-			VALUES ('%s', 'PENDING', '%s')
-			""".formatted(filename, key));
+			INSERT INTO upload_audit (original_filename, result, stored_key, file_id)
+			VALUES ('%s', 'PENDING', '%s', '%s')
+			""".formatted(filename, key, fileId));
 	}
 
 	private static void insertAllowed(String filename, String key) throws SQLException {
+		insertAllowed(filename, key, UUID.randomUUID());
+	}
+
+	private static void insertAllowed(String filename, String key, UUID fileId) throws SQLException {
 		execute("""
-			INSERT INTO upload_audit (original_filename, result, stored_key)
-			VALUES ('%s', 'ALLOWED', '%s')
-			""".formatted(filename, key));
+			INSERT INTO upload_audit (original_filename, result, stored_key, file_id)
+			VALUES ('%s', 'ALLOWED', '%s', '%s')
+			""".formatted(filename, key, fileId));
 	}
 
 	private static void insertError(String filename, String reason, String key) throws SQLException {
 		execute("""
-			INSERT INTO upload_audit (original_filename, result, reason_code, stored_key)
-			VALUES ('%s', 'ERROR', '%s', '%s')
-			""".formatted(filename, reason, key));
+			INSERT INTO upload_audit (original_filename, result, reason_code, stored_key, file_id)
+			VALUES ('%s', 'ERROR', '%s', '%s', '%s')
+			""".formatted(filename, reason, key, UUID.randomUUID()));
 	}
 
 	private static void insertWithIp(String filename, String ip) throws SQLException {
