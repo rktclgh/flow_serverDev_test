@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import flow.test.serverdev.storage.StorageKey;
 import flow.test.serverdev.support.IntegrationTest;
 
 /**
@@ -97,7 +99,7 @@ class UploadAuditMappingTest extends IntegrationTest {
 		@DisplayName("PENDING 은 확정 상태로 갈 수 있다")
 		void pendingBecomesAllowed() {
 			UploadAudit saved = repository.saveAndFlush(
-				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k1"));
+				UploadAudit.pending(attempt("a.pdf", null), key("2026/08/29/k1")));
 
 			saved.markAllowed();
 			repository.saveAndFlush(saved);
@@ -110,7 +112,7 @@ class UploadAuditMappingTest extends IntegrationTest {
 		@DisplayName("PENDING 은 실패 사유와 함께 ERROR 가 될 수 있다")
 		void pendingBecomesError() {
 			UploadAudit saved = repository.saveAndFlush(
-				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k2"));
+				UploadAudit.pending(attempt("a.pdf", null), key("2026/08/29/k2")));
 
 			saved.markError("STORAGE_UNAVAILABLE");
 			repository.saveAndFlush(saved);
@@ -125,7 +127,7 @@ class UploadAuditMappingTest extends IntegrationTest {
 		@DisplayName("확정된 기록은 다른 상태로 전이시킬 수 없다")
 		void finalStateIsFinal() {
 			UploadAudit saved = repository.saveAndFlush(
-				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k3"));
+				UploadAudit.pending(attempt("a.pdf", null), key("2026/08/29/k3")));
 			saved.markAllowed();
 
 			assertThatThrownBy(() -> saved.markError("STORAGE_UNAVAILABLE"))
@@ -141,7 +143,7 @@ class UploadAuditMappingTest extends IntegrationTest {
 		@DisplayName("ALLOWED 를 다시 ALLOWED 로 두는 것은 허용한다 — 되돌리기가 아니라 재시도다")
 		void reconfirmingAllowedIsNoOp() {
 			UploadAudit saved = repository.saveAndFlush(
-				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k4"));
+				UploadAudit.pending(attempt("a.pdf", null), key("2026/08/29/k4")));
 			saved.markAllowed();
 
 			saved.markAllowed();
@@ -153,11 +155,15 @@ class UploadAuditMappingTest extends IntegrationTest {
 		@DisplayName("ERROR 를 ALLOWED 로 되돌릴 수는 없다")
 		void errorCannotBecomeAllowed() {
 			UploadAudit saved = repository.saveAndFlush(
-				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k5"));
+				UploadAudit.pending(attempt("a.pdf", null), key("2026/08/29/k5")));
 			saved.markError("STORAGE_UNAVAILABLE");
 
 			assertThatThrownBy(saved::markAllowed).isInstanceOf(IllegalStateException.class);
 		}
+	}
+
+	private static StorageKey key(String value) {
+		return new StorageKey(UUID.randomUUID(), value);
 	}
 
 	private static UploadAttempt attempt(String filename, InetAddress clientIp) {
