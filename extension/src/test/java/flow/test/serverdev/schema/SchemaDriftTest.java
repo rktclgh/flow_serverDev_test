@@ -59,48 +59,77 @@ class SchemaDriftTest {
 			execute(connection, "SET search_path = " + DOCUMENTED);
 			execute(connection, readClasspath("db/schema.sql"));
 
-			assertThat(columns(connection, DOCUMENTED))
-				.as("컬럼 정의가 어긋났다. schema.sql 을 갱신하지 않았는지 확인하라")
-				.isEqualTo(columns(connection, MIGRATED));
+			// ★ 테이블 이름을 하드코딩하지 않는다.
+			//
+			//   이전에는 blocked_extension 하나만 비교했다. 그러면 새 테이블이 생겨도
+			//   드리프트가 잡히지 않는다 — 가드가 있는데 지키는 범위가 좁아서 못 잡는,
+			//   가장 알아채기 어려운 형태의 구멍이다.
+			//   마이그레이션이 만든 테이블 목록 자체를 먼저 비교한 뒤 각 테이블을 돈다.
+			List<String> migratedTables = tables(connection, MIGRATED);
 
-			assertThat(constraints(connection, DOCUMENTED))
-				.as("제약이 어긋났다")
-				.isEqualTo(constraints(connection, MIGRATED));
+			assertThat(tables(connection, DOCUMENTED))
+				.as("테이블 목록이 어긋났다. schema.sql 에 새 테이블을 반영하지 않았는지 확인하라")
+				.isEqualTo(migratedTables);
 
-			assertThat(triggers(connection, DOCUMENTED))
-				.as("트리거가 어긋났다")
-				.isEqualTo(triggers(connection, MIGRATED));
+			for (String table : migratedTables) {
+				assertThat(columns(connection, DOCUMENTED, table))
+					.as("[%s] 컬럼 정의가 어긋났다. schema.sql 을 갱신하지 않았는지 확인하라", table)
+					.isEqualTo(columns(connection, MIGRATED, table));
+
+				assertThat(constraints(connection, DOCUMENTED, table))
+					.as("[%s] 제약이 어긋났다", table)
+					.isEqualTo(constraints(connection, MIGRATED, table));
+
+				assertThat(triggers(connection, DOCUMENTED, table))
+					.as("[%s] 트리거가 어긋났다", table)
+					.isEqualTo(triggers(connection, MIGRATED, table));
+			}
 		}
 	}
 
-	private static List<String> columns(Connection connection, String schema) throws SQLException {
+	/** Flyway 자신의 이력 테이블은 비교 대상이 아니다 — schema.sql 에는 없는 것이 정상이다. */
+	private static List<String> tables(Connection connection, String schema) throws SQLException {
+		return query(connection, """
+			SELECT table_name
+			FROM information_schema.tables
+			WHERE table_schema = '%s'
+			  AND table_type = 'BASE TABLE'
+			  AND table_name <> 'flyway_schema_history'
+			ORDER BY table_name
+			""".formatted(schema));
+	}
+
+	private static List<String> columns(Connection connection, String schema, String table)
+			throws SQLException {
 		return query(connection, """
 			SELECT column_name || ' ' || data_type
 			       || ' nullable=' || is_nullable
 			       || ' default=' || coalesce(column_default, '-')
 			FROM information_schema.columns
-			WHERE table_schema = '%s' AND table_name = 'blocked_extension'
+			WHERE table_schema = '%s' AND table_name = '%s'
 			ORDER BY ordinal_position
-			""".formatted(schema));
+			""".formatted(schema, table));
 	}
 
 	/** {@code pg_get_constraintdef} 로 정의까지 비교한다. 이름만 비교하면 내용 변경을 놓친다. */
-	private static List<String> constraints(Connection connection, String schema) throws SQLException {
+	private static List<String> constraints(Connection connection, String schema, String table)
+			throws SQLException {
 		return query(connection, """
 			SELECT conname || ' :: ' || pg_get_constraintdef(oid)
 			FROM pg_constraint
-			WHERE conrelid = '%s.blocked_extension'::regclass
+			WHERE conrelid = '%s.%s'::regclass
 			ORDER BY conname
-			""".formatted(schema));
+			""".formatted(schema, table));
 	}
 
-	private static List<String> triggers(Connection connection, String schema) throws SQLException {
+	private static List<String> triggers(Connection connection, String schema, String table)
+			throws SQLException {
 		return query(connection, """
 			SELECT tgname
 			FROM pg_trigger
-			WHERE tgrelid = '%s.blocked_extension'::regclass AND NOT tgisinternal
+			WHERE tgrelid = '%s.%s'::regclass AND NOT tgisinternal
 			ORDER BY tgname
-			""".formatted(schema));
+			""".formatted(schema, table));
 	}
 
 	private static List<String> query(Connection connection, String sql) throws SQLException {

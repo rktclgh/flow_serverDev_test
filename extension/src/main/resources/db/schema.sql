@@ -16,7 +16,7 @@
 --   앱 검사는 사용자에게 친절한 오류를 주기 위한 것이고,
 --   정합성 보증은 아래 제약과 트리거가 담당한다. API 를 우회해도 지켜져야 한다.
 --
--- 반영된 migration : V1
+-- 반영된 migration : V1, V2
 -- =============================================================================
 
 
@@ -182,6 +182,131 @@ INSERT INTO blocked_extension (name, type, is_blocked) VALUES
     ('exe', 'FIXED', FALSE),
     ('scr', 'FIXED', FALSE),
     ('js',  'FIXED', FALSE);
+
+
+-- -----------------------------------------------------------------------------
+-- upload_audit — 업로드 감사 기록
+-- -----------------------------------------------------------------------------
+--
+-- 컬럼
+--   id                 BIGINT       PK, 자동 증가
+--   occurred_at        TIMESTAMPTZ  기록 시각
+--   client_ip          INET         복원된 실제 클라이언트 IP. IPv4/IPv6 모두
+--   original_filename  TEXT         원본 파일명. 제어문자는 앱이 이스케이프해 저장
+--   size_bytes         BIGINT       파일 크기
+--   result             VARCHAR(10)  ALLOWED | BLOCKED | ERROR | PENDING
+--   reason_code        VARCHAR(40)  실패 사유
+--   matched_extension  VARCHAR(20)  차단에 걸린 확장자 (정규화된 형태)
+--   note               VARCHAR(40)  차단하지 않았으나 관측된 신호
+--   stored_key         TEXT         오브젝트 스토리지 키. yyyy/MM/dd/{UUID}
+--
+-- ★ 두 단계 기록 (PENDING)
+--
+--   Postgres 와 MinIO 에 걸친 원자성은 2PC 없이 성립하지 않는다. 대신 순서를 뒤집어
+--   가장 흔한 실패에서 찌꺼기가 남지 않게 만든다.
+--
+--     1) INSERT (PENDING, stored_key) 커밋   <- DB 장애면 여기서 끝. MinIO 미접촉
+--     2) MinIO PUT                           <- 실패면 UPDATE(ERROR)
+--     3) UPDATE (ALLOWED) 커밋               <- 실패면 보상 삭제 시도
+--
+--   보장하는 것
+--     - 참조 무결성: 행이 없으면 객체는 도달 불가능, ALLOWED 면 객체는 반드시 존재
+--     - DB 장애 시 찌꺼기 0
+--     - 잔여물은 항상 PENDING 으로 남아 탐지 가능
+
+CREATE TABLE upload_audit (
+    id                 BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    occurred_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- ★ INET 이어야 한다. IPv6 는 같은 주소의 표기가 여러 가지여서 TEXT 로 두면
+    --   한 주소가 여러 값으로 갈라지고, IP 별 집계가 불가능해진다.
+    --   INET 은 저장 시 정규화하고 형식이 깨진 값을 거부하며 서브넷 연산을 지원한다.
+    client_ip          INET,
+
+    original_filename  TEXT        NOT NULL,
+    size_bytes         BIGINT,
+    result             VARCHAR(10) NOT NULL,
+    reason_code        VARCHAR(40),
+    matched_extension  VARCHAR(20),
+    note               VARCHAR(40),
+    stored_key         TEXT,
+
+    CONSTRAINT ck_upload_audit_result CHECK (
+        result IN ('ALLOWED', 'BLOCKED', 'ERROR', 'PENDING')
+    ),
+
+    -- 상태와 저장 키의 정합. CHECK 는 3값 논리라 IS NULL / IS NOT NULL 을 명시한다.
+    CONSTRAINT ck_upload_audit_stored_key CHECK (
+        (result IN ('ALLOWED', 'PENDING') AND stored_key IS NOT NULL)
+        OR (result = 'BLOCKED' AND stored_key IS NULL)
+        OR result = 'ERROR'
+    ),
+
+    -- 실패는 이유 없이 기록될 수 없다.
+    CONSTRAINT ck_upload_audit_reason CHECK (
+        result NOT IN ('BLOCKED', 'ERROR') OR reason_code IS NOT NULL
+    ),
+
+    -- blocked_extension.name 과 글자 그대로 같은 규칙.
+    CONSTRAINT ck_upload_audit_extension_format CHECK (
+        matched_extension IS NULL OR matched_extension ~ '^[a-z0-9]{1,20}$'
+    ),
+
+    CONSTRAINT ck_upload_audit_size CHECK (size_bytes IS NULL OR size_bytes >= 0),
+
+    CONSTRAINT uq_upload_audit_stored_key UNIQUE (stored_key)
+);
+
+CREATE INDEX idx_upload_audit_occurred_at ON upload_audit (occurred_at DESC);
+
+-- 미완료 기록만 훑는 부분 인덱스. 전체의 극소수라 작게 유지된다.
+CREATE INDEX idx_upload_audit_pending ON upload_audit (occurred_at)
+    WHERE result = 'PENDING';
+
+-- 기록은 고쳐 쓸 수 없다.
+--
+-- 감사 기록의 가치는 "고쳐지지 않았다" 는 신뢰에서 나온다. 사실을 담은 컬럼은 잠그고,
+-- 두 단계 프로토콜이 요구하는 result 전이(PENDING -> ALLOWED|ERROR)만 열어둔다.
+--
+-- DELETE 는 막지 않는다. 보존 기간 정책은 운영의 문제이고, 삭제까지 막으면 테이블이
+-- 무한히 자란다. 여기서 지키려는 것은 "남아 있는 기록이 사실인가" 이다.
+CREATE OR REPLACE FUNCTION extguard_protect_upload_audit() RETURNS trigger AS $$
+BEGIN
+    IF NEW.id IS DISTINCT FROM OLD.id
+       OR NEW.occurred_at IS DISTINCT FROM OLD.occurred_at
+       OR NEW.client_ip IS DISTINCT FROM OLD.client_ip
+       OR NEW.original_filename IS DISTINCT FROM OLD.original_filename
+       OR NEW.size_bytes IS DISTINCT FROM OLD.size_bytes
+       OR NEW.matched_extension IS DISTINCT FROM OLD.matched_extension
+       OR NEW.note IS DISTINCT FROM OLD.note
+       OR NEW.stored_key IS DISTINCT FROM OLD.stored_key THEN
+        RAISE EXCEPTION 'audit record cannot change: only result may transition (id=%)', OLD.id;
+    END IF;
+
+    IF NEW.result IS DISTINCT FROM OLD.result THEN
+        IF OLD.result <> 'PENDING' OR NEW.result NOT IN ('ALLOWED', 'ERROR') THEN
+            RAISE EXCEPTION 'audit record cannot change result: % -> % (id=%)',
+                OLD.result, NEW.result, OLD.id;
+        END IF;
+    END IF;
+
+    -- reason_code 는 PENDING -> ERROR 전이의 일부일 때만 바뀔 수 있다.
+    --
+    -- 이 컬럼을 잠그지 않으면 확정된 기록의 "왜" 를 나중에 고쳐 쓸 수 있다.
+    -- 하필 사건을 설명하는 바로 그 필드다 — 여기가 열려 있으면
+    -- 나머지를 아무리 잠가도 기록을 믿을 수 없다.
+    IF NEW.reason_code IS DISTINCT FROM OLD.reason_code
+       AND NOT (OLD.result = 'PENDING' AND NEW.result = 'ERROR') THEN
+        RAISE EXCEPTION 'audit record cannot change reason_code (id=%)', OLD.id;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_upload_audit_protect
+    BEFORE UPDATE ON upload_audit
+    FOR EACH ROW EXECUTE FUNCTION extguard_protect_upload_audit();
 
 
 -- -----------------------------------------------------------------------------
