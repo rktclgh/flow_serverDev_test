@@ -32,6 +32,11 @@ class FilenameAnalyzerTest {
 	private static final String LRE = "\u202A";   // LEFT-TO-RIGHT EMBEDDING
 	private static final String RLM = "\u200F";   // RIGHT-TO-LEFT MARK
 	private static final String FW_DOT = "\uFF0E"; // 전각 마침표. NFKC 로 ASCII 점이 된다
+	private static final String ALM = "\u061C";   // ARABIC LETTER MARK — bidi 제어인데 목록에서 빠지기 쉽다
+	private static final String ZWSP = "\u200B";  // ZERO WIDTH SPACE — Cf, 화면에 보이지 않는다
+	private static final String BOM = "\uFEFF";   // ZERO WIDTH NO-BREAK SPACE / BOM — Cf
+	private static final String CR = "\r";
+	private static final String LF = "\n";
 
 	private Ok ok(String raw) {
 		FilenameAnalysis result = analyzer.analyze(raw);
@@ -215,6 +220,64 @@ class FilenameAnalyzerTest {
 		void 파일명_길이_경계() {
 			String name = "a".repeat(251) + ".txt";   // 251 + 4 = 255
 			assertThat(ok(name).lastExtension()).contains("txt");
+		}
+
+		@Test
+		@DisplayName("보이지 않는 서식문자로 확장자 정규화를 실패시키는 우회를 막는다")
+		void 보이지_않는_문자_우회_방어() {
+			// "invoice.exe" + ZWSP 는 확장자 후보가 "exe"+ZWSP 가 되어 정규화에 실패한다.
+			// 그대로 두면 Optional.empty() 가 되어 "확장자 없음" 으로 빠져나가고,
+			// Makefile 같은 진짜 확장자 없는 파일과 구분되지 않는다.
+			// ZWSP 는 Character.isWhitespace 가 false 라 후행 제거 대상도 아니다.
+			assertThat(reason("invoice.exe" + ZWSP)).isEqualTo(FilenameRejectReason.CONTROL_CHARACTER);
+			assertThat(reason("invoice" + BOM + ".exe")).isEqualTo(FilenameRejectReason.CONTROL_CHARACTER);
+		}
+
+		@Test
+		@DisplayName("CR/LF 는 거부한다 — 원본 파일명이 헤더·로그로 흘러갈 때의 주입 경계")
+		void 개행문자_거부() {
+			assertThat(reason("report" + CR + LF + "X-Forged: yes.txt"))
+				.isEqualTo(FilenameRejectReason.CONTROL_CHARACTER);
+			assertThat(reason("report" + LF + ".txt")).isEqualTo(FilenameRejectReason.CONTROL_CHARACTER);
+		}
+
+		@Test
+		@DisplayName("ALM(U+061C) 도 양방향 제어문자로 거부한다")
+		void 아랍문자표시_거부() {
+			// 개별 코드포인트를 나열하면 빠지기 쉬운 문자다.
+			// 유니코드 카테고리(Cf) 기반 판정이라 목록 누락과 무관하게 걸린다.
+			assertThat(reason("photo" + ALM + "gnp.exe")).isEqualTo(FilenameRejectReason.BIDI_CONTROL);
+		}
+
+		@Test
+		@DisplayName("공백(Zs)은 제어문자가 아니므로 정상 파일명을 거부하지 않는다")
+		void 공백은_허용() {
+			// Cc/Cf 만 거부한다. 사람이 붙인 "my report.pdf" 같은 이름은 유지되어야 한다.
+			assertThat(ext("my report.pdf")).isEqualTo("pdf");
+			assertThat(ok("archive.tar.gz backup").lastExtension()).isEmpty();
+		}
+
+		@Test
+		@DisplayName("원시 입력 상한이 적용된다 (동작 고정 — 회귀 방어가 아님)")
+		void 원시_입력_상한() {
+			// ★ 이 테스트는 상한이 "정규화 이전에" 적용되는지 증명하지 못한다.
+			//    상한을 제거해도 basename 길이 검사가 같은 TOO_LONG 을 내므로 결과가 동일하다.
+			//    뮤테이션 검증에서 확인했다 — 원시 상한 제거 시 실패한 테스트 0건.
+			//
+			//    원시 상한의 목적은 정확성이 아니라 비용 상한이다. 공격자가 통제하는 거대한
+			//    문자열을 NFKC 로 전부 정규화하고 코드포인트를 순회한 뒤에야 거부하는 것을 막는다.
+			//    그 성능 특성은 결과 기반 테스트로 검증할 수 없고(시간 측정은 CI 에서 불안정하다),
+			//    코드의 단계 순서로만 보장된다.
+			assertThat(reason("a".repeat(5000) + ".txt")).isEqualTo(FilenameRejectReason.TOO_LONG);
+		}
+
+		@Test
+		@DisplayName("길이는 basename 기준으로 잰다 — C:\\fakepath\\ 접두어가 정상 파일을 거부하면 안 된다")
+		void 길이는_basename_기준() {
+			// 일부 브라우저는 C:\fakepath\ 를 붙여 보낸다.
+			// 전체 길이로 재면 267자가 되어 거부되지만 basename 은 255자로 정상이다.
+			String withPath = "C:\\fakepath\\" + "a".repeat(251) + ".txt";
+			assertThat(ok(withPath).lastExtension()).contains("txt");
 		}
 	}
 }
