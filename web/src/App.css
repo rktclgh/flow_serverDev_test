@@ -35,7 +35,10 @@ header h1 { margin: 0 0 4px; font-size: 24px; }
 .admin-token .hint { color: var(--muted); font-size: 12px; }
 
 main { display: grid; gap: 20px; margin-top: 20px; }
-@media (min-width: 860px) { main { grid-template-columns: 1fr 1fr; align-items: start; } }
+@media (min-width: 860px) {
+  main { grid-template-columns: 1fr 1fr; align-items: start; }
+  .panel.files { grid-column: 1 / -1; }
+}
 
 .panel {
   background: var(--panel); border: 1px solid var(--line);
@@ -105,9 +108,84 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
 .reason { color: var(--warn); }
 .queue-item .hint { color: var(--warn); }
 
-.queue-item.done { border-left-color: var(--ok); }
-.queue-item.rejected { border-left-color: var(--danger); }
-.queue-item.failed { border-left-color: var(--danger); }
+/* 큐에는 처리 중인 것만 남는다. 끝난 항목의 색은 토스트가 가져갔다. */
+.queue-item.queued { border-left-color: var(--line); }
 .queue-item.retrying { border-left-color: var(--warn); }
 .queue-item.uploading { border-left-color: var(--accent); }
-.queue-item.cancelled { border-left-color: var(--muted); }
+.queue-empty { font-size: 13px; margin-top: 12px; }
+
+
+/* ── 토스트 ──────────────────────────────────────────────────
+   거부는 1회성으로 알리고 사라진다. 목록에 쌓이면 그것은 알림이 아니라 로그다. */
+.toast-host {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+}
+.toast {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 10px 10px 12px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-left-width: 3px; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  animation: toast-in .16s ease-out;
+}
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.toast-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.toast-text strong {
+  font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.toast-text span { font-size: 12px; color: var(--muted); }
+/* "무엇이 / 왜" 의 근거. 사유가 흐려지면 토스트로 옮긴 의미가 없다. */
+.toast-detail { color: var(--warn) !important; }
+.toast button { border: 0; background: none; padding: 0 4px; color: var(--muted); line-height: 1; }
+.toast button:hover { color: var(--text); }
+
+.toast.success { border-left-color: var(--ok); }
+.toast.error { border-left-color: var(--danger); }
+.toast.warning { border-left-color: var(--warn); }
+.toast.info { border-left-color: var(--accent); }
+
+/* ── 업로드된 파일 카드 ───────────────────────────────────── */
+.file-grid {
+  list-style: none; padding: 0; margin: 12px 0 0;
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.file-card {
+  position: relative;
+  background: #10131a; border: 1px solid var(--line); border-radius: 8px;
+}
+.file-card:hover { border-color: var(--accent); }
+
+/* 카드 본체가 곧 다운로드 링크다. 삭제 버튼은 이 링크 밖에 있어 클릭이 섞이지 않는다. */
+.file-body {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 16px 12px 12px; text-decoration: none; color: inherit;
+}
+.file-body:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 8px; }
+
+.file-icon { width: 40px; height: 48px; }
+.file-icon .sheet { fill: #1c2130; stroke: var(--line); stroke-width: 1.5; }
+.file-icon .fold { fill: var(--line); }
+.file-icon .ext { fill: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .3px; }
+
+.file-name {
+  font-size: 12px; text-align: center; margin-top: 4px;
+  /* 두 줄로 못 박는다. 카드 높이가 이름 길이에 따라 달라지면 그리드가 흔들린다.
+     잘려도 전체 이름은 카드의 title 속성으로 볼 수 있다. */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.file-size { font-size: 13px; font-weight: 600; color: var(--accent); }
+.file-time { font-size: 11px; color: var(--muted); }
+
+.file-delete {
+  position: absolute; top: 4px; right: 4px;
+  border: 0; background: none; padding: 2px 6px; line-height: 1;
+  color: var(--muted); font-size: 15px; border-radius: 4px;
+}
+.file-delete:hover:not(:disabled) { color: var(--danger); background: #1c2130; }
