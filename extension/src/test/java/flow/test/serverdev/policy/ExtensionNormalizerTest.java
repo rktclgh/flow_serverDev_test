@@ -28,6 +28,8 @@ class ExtensionNormalizerTest {
 	// 에디터가 지우거나, 리뷰에서 발견되지 않거나, 다른 공백으로 오인될 수 있다.
 	private static final String NBSP = "\u00A0";  // NFKC 가 일반 공백(U+0020)으로 접는다
 	private static final String NUL = "\u0000";
+	private static final String EMOJI = "\uD83D\uDE00";     // U+1F600, 서로게이트 페어
+	private static final String LIGATURE_FI = "\uFB01";      // NFKC 로 "fi" 2자가 된다
 
 	private String okValue(String raw) {
 		NormalizeResult result = normalizer.normalize(raw);
@@ -93,12 +95,18 @@ class ExtensionNormalizerTest {
 		@Test
 		@DisplayName("터키어 로케일에서도 대문자 I 가 올바르게 소문자화된다")
 		void 터키어_로케일_안전성() {
+			// toLowerCase(Locale.ROOT) 강제에 대한 회귀 테스트.
 			// Locale 을 지정하지 않으면 터키어에서 "I" -> "ı"(U+0131) 가 되어
-			// 고정 확장자 js 가 조용히 뚫린다. toLowerCase(Locale.ROOT) 강제에 대한 회귀 테스트.
+			// 패턴 ^[a-z0-9]$ 에 걸리지 않고 확장자가 조용히 거부된다.
+			//
+			// 주의: "JS" 로는 이 회귀를 잡지 못한다. 대문자 I 가 없어 터키어에서도 "js" 가 되기 때문이다.
+			// 실제로 영향받는 것은 I 를 포함한 확장자이며, pif 는 Windows 실행 파일 확장자다.
 			Locale original = Locale.getDefault();
 			try {
 				Locale.setDefault(Locale.forLanguageTag("tr"));
-				assertThat(okValue("JS")).isEqualTo("js");
+				assertThat(okValue("I")).isEqualTo("i");
+				assertThat(okValue("PIF")).isEqualTo("pif");
+				assertThat(okValue("INI")).isEqualTo("ini");
 			} finally {
 				Locale.setDefault(original);
 			}
@@ -168,6 +176,23 @@ class ExtensionNormalizerTest {
 		void 비아스키_거부() {
 			assertThat(rejectReason("한글")).isEqualTo(RejectReason.INVALID_CHARACTER);
 			assertThat(rejectReason("café")).isEqualTo(RejectReason.INVALID_CHARACTER);
+		}
+
+		@Test
+		@DisplayName("서로게이트 페어는 코드포인트로 센다 — length() 로 세면 길이 초과로 오분류된다")
+		void 코드포인트_기준_길이_판정() {
+			// 이모지 11개는 UTF-16 code unit 으로 22, 코드포인트로는 11이다.
+			// length() 를 쓰면 TOO_LONG 이 되지만 실제 거부 사유는 "허용되지 않는 문자"다.
+			// Postgres 의 VARCHAR(20)/CHECK {1,20} 도 코드포인트 기준이라 DB 와도 이 쪽이 일치한다.
+			assertThat(rejectReason(EMOJI.repeat(11))).isEqualTo(RejectReason.INVALID_CHARACTER);
+		}
+
+		@Test
+		@DisplayName("NFKC 가 길이를 늘리는 경우 정규화 후 길이로 판정한다")
+		void NFKC_확장_후_길이_판정() {
+			// U+FB01(ﬁ 합자)는 NFKC 로 "fi" 2자가 된다. 15개면 30자가 되어 상한을 넘는다.
+			// 길이 검사가 NFKC 이후여야 성립한다.
+			assertThat(rejectReason(LIGATURE_FI.repeat(15))).isEqualTo(RejectReason.TOO_LONG);
 		}
 	}
 }
