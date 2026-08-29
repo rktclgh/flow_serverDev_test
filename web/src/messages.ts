@@ -25,6 +25,7 @@ const MESSAGES: Record<string, string> = {
   FILE_EMPTY: '빈 파일은 올릴 수 없어요.',
   FILE_TOO_LARGE: '파일이 너무 커요. 10MB까지 올릴 수 있어요.',
   FILE_REQUIRED: '올릴 파일을 찾지 못했어요.',
+  FILE_NOT_FOUND: '이미 삭제된 파일이에요. 목록을 새로고침할게요.',
   RATE_LIMITED: '요청이 많아 잠시 기다릴게요.',
   STORAGE_UNAVAILABLE: '저장소에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.',
   UPLOAD_OUTCOME_UNKNOWN: '저장됐는지 확인할 수 없어요. 목록에서 확인한 뒤 다시 올려 주세요.',
@@ -68,6 +69,7 @@ const TONES: Record<string, ToastTone> = {
 
   FILE_COUNT_EXCEEDED: 'warning',
   FILE_EMPTY: 'warning',
+  FILE_NOT_FOUND: 'info',
   // 첫 요청이 성공했을 수 있다. 실패라고 단정하지 않는다(§21.6).
   UPLOAD_OUTCOME_UNKNOWN: 'warning',
   RATE_LIMITED: 'info',
