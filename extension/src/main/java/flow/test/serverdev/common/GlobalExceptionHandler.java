@@ -104,6 +104,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 			case 404 -> ErrorCode.NOT_FOUND;
 			case 405 -> ErrorCode.METHOD_NOT_ALLOWED;
 			case 415 -> ErrorCode.UNSUPPORTED_MEDIA_TYPE;
+			// 크기 초과. 별도 @ExceptionHandler 를 두지 않는 이유는 상위 클래스가 이미
+			// MaxUploadSizeExceededException 을 처리하기 때문이다 — 같은 예외에 핸들러를 하나 더
+			// 선언하면 매핑이 모호해져 컨텍스트가 아예 뜨지 않는다. 상태 코드로 받는다.
+			//
+			// 이 응답이 브라우저까지 도착하는 것은 server.tomcat.max-swallow-size: -1 덕분이다.
+			// 그 설정이 없으면 남은 바이트를 읽지 않고 커넥션을 끊어 ERR_CONNECTION_RESET 이 뜬다.
+			case 413 -> ErrorCode.FILE_TOO_LARGE;
 			// 명시하지 않은 상태는 계열로 판단한다. 새 상태가 생겨도 5xx 가 400 으로
 			// 둔갑하지 않도록, 모르는 것은 계열을 따라간다.
 			default -> status.is5xxServerError() ? ErrorCode.INTERNAL_ERROR : ErrorCode.REQUEST_INVALID;
