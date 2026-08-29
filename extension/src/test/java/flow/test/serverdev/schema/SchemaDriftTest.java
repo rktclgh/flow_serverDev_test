@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import flow.test.serverdev.support.TestImages;
 
 /**
  * {@code db/schema.sql} 과 Flyway 마이그레이션이 <b>같은 스키마를 만드는지</b> 검증한다.
@@ -35,7 +36,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class SchemaDriftTest {
 
 	@Container
-	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine");
+	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(TestImages.POSTGRES);
 
 	private static final String MIGRATED = "mig";
 	private static final String DOCUMENTED = "doc";
