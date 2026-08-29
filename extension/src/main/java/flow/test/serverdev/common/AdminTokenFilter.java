@@ -3,6 +3,7 @@ package flow.test.serverdev.common;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Set;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpMethod;
@@ -31,6 +32,10 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 	private static final String HEADER = "X-Admin-Token";
 	private static final String PROTECTED_PREFIX = "/api/extensions";
 
+	/** 상태를 바꾸지 않는 메서드. 정책 조회는 공개이므로 이들은 토큰을 요구하지 않는다. */
+	private static final Set<String> SAFE_METHODS =
+		Set.of(HttpMethod.GET.name(), HttpMethod.HEAD.name(), HttpMethod.OPTIONS.name());
+
 	private final byte[] expectedToken;
 	private final boolean configured;
 
@@ -39,10 +44,16 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 		this.expectedToken = configured ? adminToken.getBytes(StandardCharsets.UTF_8) : new byte[0];
 	}
 
+	/**
+	 * <b>안전한 메서드</b>(RFC 9110 §9.2.1)는 통과시킨다. 상태를 바꾸지 않으므로 보호 대상이 아니다.
+	 *
+	 * <p>처음에는 GET 만 통과시켰는데, 그러면 HEAD 가 401 을 받는다. HEAD 는 본문 없는 GET 이라
+	 * 헬스체크·모니터링·링크 검사기가 흔히 쓴다 — 읽기를 공개하기로 해놓고
+	 * 읽기의 한 형태를 막는 셈이었다. OPTIONS 도 같은 이유로 통과시킨다.
+	 */
 	@Override
 	protected boolean shouldNotFilter(HttpServletRequest request) {
-		// 조회(GET)는 화면 렌더링에 필요하므로 공개
-		if (HttpMethod.GET.matches(request.getMethod())) {
+		if (SAFE_METHODS.contains(request.getMethod())) {
 			return true;
 		}
 		return !request.getRequestURI().startsWith(PROTECTED_PREFIX);
@@ -75,11 +86,21 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 		filterChain.doFilter(request, response);
 	}
 
+	/**
+	 * 필터가 만드는 응답도 컨트롤러 응답과 <b>같은 형태</b>여야 한다.
+	 *
+	 * <p>{@code setCharacterEncoding} 을 쓰면 헤더가 {@code application/json;charset=UTF-8} 이 되어
+	 * 스프링이 내보내는 {@code application/json} 과 달라진다. JSON 은 규격상 UTF-8 이라
+	 * 파라미터가 필요 없으므로, 바이트를 직접 써서 두 경로의 헤더를 일치시킨다.
+	 */
 	private void reject(HttpServletResponse response, String code, String message) throws IOException {
+		byte[] body = """
+				{"code":"%s","message":"%s"}""".formatted(code, message)
+			.getBytes(StandardCharsets.UTF_8);
+
 		response.setStatus(HttpStatus.UNAUTHORIZED.value());
 		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
-		response.getWriter().write("""
-				{"code":"%s","message":"%s"}""".formatted(code, message));
+		response.setContentLength(body.length);
+		response.getOutputStream().write(body);
 	}
 }
