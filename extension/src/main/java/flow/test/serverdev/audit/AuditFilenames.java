@@ -52,6 +52,17 @@ public final class AuditFilenames {
 		if (escaped.length() <= MAX_LENGTH) {
 			return escaped.toString();
 		}
-		return escaped.substring(0, MAX_LENGTH - TRUNCATED.length()) + TRUNCATED;
+
+		// 코드포인트 경계에서 자른다.
+		//
+		// UTF-16 은 이모지 같은 보조 평면 문자를 두 char(서로게이트 쌍)로 담는다.
+		// 그 사이에서 자르면 짝 없는 상위 서로게이트만 남아 유효한 UTF-8 로 인코딩할 수
+		// 없는 문자열이 된다. 드라이버가 거부하거나 물음표로 바꿔버리고,
+		// 어느 쪽이든 증거로 남기려던 기록이 망가진다.
+		int cut = MAX_LENGTH - TRUNCATED.length();
+		if (Character.isHighSurrogate(escaped.charAt(cut - 1))) {
+			cut--;
+		}
+		return escaped.substring(0, cut) + TRUNCATED;
 	}
 }

@@ -27,12 +27,22 @@ public final class ClientAddresses {
 		"^((25[0-5]|2[0-4]\\d|1\\d{2}|[1-9]?\\d)\\.){3}(25[0-5]|2[0-4]\\d|1\\d{2}|[1-9]?\\d)$");
 
 	/**
-	 * 16진수·콜론·점(IPv4-mapped)·존 인덱스만 허용한다.
+	 * 16진수·콜론·점(IPv4-mapped)만 허용한다.
 	 *
 	 * <p>호스트명은 콜론을 포함할 수 없으므로, 콜론을 요구하는 것만으로도 이름 해석 경로가 닫힌다.
 	 * 문자 집합까지 좁힌 것은 그 위의 한 겹이다.
+	 *
+	 * <p><b>존 인덱스({@code %lo0})는 받지 않는다.</b> {@code InetAddress} 는 스코프를 유지하고
+	 * {@code getHostAddress()} 가 {@code fe80:0:0:0:0:0:0:1%lo0} 을 돌려주는데,
+	 * PostgreSQL 의 {@code INET} 은 스코프가 붙은 리터럴을 거부한다(숫자 스코프도 마찬가지).
+	 * 그대로 두면 감사 INSERT 가 실패하고, 감사 실패는 fail-closed 이므로 요청이 503 이 된다.
+	 * <b>이 값은 X-Forwarded-For 에서 오므로 공격자가 그 503 을 마음대로 유발할 수 있다.</b>
+	 *
+	 * <p>스코프를 떼어내 저장하는 방법도 있으나 택하지 않았다. 링크로컬 주소는 스코프를 빼면
+	 * 서로 다른 호스트의 주소가 같은 값으로 뭉개진다 — 감사 기록에 그런 값을 남기는 것은
+	 * 주소를 모르는 것보다 나쁘다.
 	 */
-	private static final Pattern IPV6 = Pattern.compile("^[0-9A-Fa-f:.]+(%[0-9A-Za-z]+)?$");
+	private static final Pattern IPV6 = Pattern.compile("^[0-9A-Fa-f:.]+$");
 
 	private ClientAddresses() {
 	}

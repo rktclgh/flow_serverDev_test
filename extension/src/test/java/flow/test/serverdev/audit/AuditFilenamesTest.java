@@ -114,6 +114,33 @@ class AuditFilenamesTest {
 			assertThat(recorded).endsWith("(truncated)");
 		}
 
+		/**
+		 * UTF-16 은 이모지를 두 char(서로게이트 쌍)로 담는다. 그 사이에서 자르면
+		 * 짝 없는 상위 서로게이트만 남아 유효한 UTF-8 로 인코딩할 수 없는 문자열이 된다.
+		 * 드라이버가 거부하거나 물음표로 바꿔버리고, 어느 쪽이든 증거가 망가진다.
+		 *
+		 * <p>잘리는 위치에 이모지가 정확히 걸치도록 만들어 겨눈다.
+		 */
+		@Test
+		@DisplayName("자르는 위치에 이모지가 걸쳐도 짝 없는 서로게이트를 남기지 않는다")
+		void neverSplitsSurrogatePairs() {
+			int cut = AuditFilenames.MAX_LENGTH - "…(truncated)".length();
+
+			for (int prefix = cut - 2; prefix <= cut; prefix++) {
+				String name = "a".repeat(prefix) + CAMERA.repeat(20);
+
+				String recorded = AuditFilenames.forRecord(name);
+
+				// codePoints() 는 짝이 맞는 쌍을 하나의 보조 평면 코드포인트로 합쳐 내보내고,
+				// 짝이 없는 서로게이트는 D800~DFFF 값 그대로 흘린다.
+				// 즉 이 범위가 나오면 잘린 쌍이 남아 있다는 뜻이다.
+				assertThat(recorded.codePoints().noneMatch(cp -> cp >= 0xD800 && cp <= 0xDFFF))
+					.as("prefix=%d 에서 짝 없는 서로게이트가 남았다", prefix)
+					.isTrue();
+				assertThat(recorded).hasSizeLessThanOrEqualTo(AuditFilenames.MAX_LENGTH);
+			}
+		}
+
 		@Test
 		@DisplayName("상한 이하이면 그대로 둔다")
 		void underLimitIsUntouched() {

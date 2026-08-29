@@ -290,6 +290,16 @@ BEGIN
         END IF;
     END IF;
 
+    -- reason_code 는 PENDING -> ERROR 전이의 일부일 때만 바뀔 수 있다.
+    --
+    -- 이 컬럼을 잠그지 않으면 확정된 기록의 "왜" 를 나중에 고쳐 쓸 수 있다.
+    -- 하필 사건을 설명하는 바로 그 필드다 — 여기가 열려 있으면
+    -- 나머지를 아무리 잠가도 기록을 믿을 수 없다.
+    IF NEW.reason_code IS DISTINCT FROM OLD.reason_code
+       AND NOT (OLD.result = 'PENDING' AND NEW.result = 'ERROR') THEN
+        RAISE EXCEPTION 'audit record cannot change reason_code (id=%)', OLD.id;
+    END IF;
+
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
