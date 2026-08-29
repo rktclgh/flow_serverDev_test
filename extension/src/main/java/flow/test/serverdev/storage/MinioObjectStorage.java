@@ -92,7 +92,18 @@ public class MinioObjectStorage implements ObjectStorage {
 				.contentType(FORCED_CONTENT_TYPE)
 				.build());
 		} catch (MinioException e) {
-			throw new StorageException("객체를 저장하지 못했습니다: " + key.value(), e);
+			// ★ 저장 실패는 종류를 불문하고 "모른다" 로 다룬다.
+			//
+			// 처음에는 ErrorResponseException(서버가 응답을 보냈다)을 "객체 없음 확실" 로 분류했다.
+			// 외부 리뷰에서 틀렸다는 지적을 받았고, 확인해보니 사실이다 — S3 의 5xx(InternalError,
+			// ServiceUnavailable)는 서버가 데이터를 이미 받아 쓴 뒤에도 날 수 있고, SlowDown 역시
+			// 앞선 쓰기의 성공 여부를 말해주지 않는다. putObject 에는 "이 코드면 안 써졌다" 를
+			// 보장하는 코드가 없다.
+			//
+			// 확실하지 않은 것을 확실하다고 다루면 실제로 저장된 객체를 ERROR 로 확정하게 되고,
+			// 그 객체는 PENDING 정리 대상에서 사라져 아무도 찾지 못한다. 보수적인 쪽이 옳다.
+			throw new StorageOutcomeUnknownException(
+				"객체 저장 결과를 확인할 수 없습니다: " + key.value(), e);
 		}
 	}
 

@@ -14,6 +14,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import flow.test.serverdev.storage.StorageException;
+import flow.test.serverdev.storage.StorageOutcomeUnknownException;
+
 /**
  * 예외를 {@link ApiErrorResponse} 로 변환하는 단일 지점.
  *
@@ -44,6 +47,24 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
 	/** 애플리케이션이 스스로 내린 판정. 사용자에게 그대로 설명할 수 있는 실패다. */
+	/**
+	 * 결과를 알 수 없는 저장 실패. <b>{@link StorageException} 보다 먼저</b> 선언돼 있어야 하는 것이
+	 * 아니라, 스프링이 가장 구체적인 핸들러를 고르므로 하위 타입인 이것이 선택된다.
+	 */
+	@ExceptionHandler(StorageOutcomeUnknownException.class)
+	ResponseEntity<ApiErrorResponse> handleStorageUnknown(StorageOutcomeUnknownException exception) {
+		log.warn("저장 결과 불명", exception);
+		return ResponseEntity.status(ErrorCode.UPLOAD_OUTCOME_UNKNOWN.status())
+			.body(ApiErrorResponse.of(ErrorCode.UPLOAD_OUTCOME_UNKNOWN, "저장됐는지 확인할 수 없습니다."));
+	}
+
+	@ExceptionHandler(StorageException.class)
+	ResponseEntity<ApiErrorResponse> handleStorage(StorageException exception) {
+		log.error("스토리지 실패", exception);
+		return ResponseEntity.status(ErrorCode.STORAGE_UNAVAILABLE.status())
+			.body(ApiErrorResponse.of(ErrorCode.STORAGE_UNAVAILABLE, "저장소에 연결하지 못했습니다."));
+	}
+
 	@ExceptionHandler(PolicyException.class)
 	ResponseEntity<ApiErrorResponse> handlePolicy(PolicyException exception) {
 		return ResponseEntity.status(exception.errorCode().status())
@@ -83,6 +104,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 			case 404 -> ErrorCode.NOT_FOUND;
 			case 405 -> ErrorCode.METHOD_NOT_ALLOWED;
 			case 415 -> ErrorCode.UNSUPPORTED_MEDIA_TYPE;
+			// 크기 초과. 별도 @ExceptionHandler 를 두지 않는 이유는 상위 클래스가 이미
+			// MaxUploadSizeExceededException 을 처리하기 때문이다 — 같은 예외에 핸들러를 하나 더
+			// 선언하면 매핑이 모호해져 컨텍스트가 아예 뜨지 않는다. 상태 코드로 받는다.
+			//
+			// 이 응답이 브라우저까지 도착하는 것은 server.tomcat.max-swallow-size: -1 덕분이다.
+			// 그 설정이 없으면 남은 바이트를 읽지 않고 커넥션을 끊어 ERR_CONNECTION_RESET 이 뜬다.
+			case 413 -> ErrorCode.FILE_TOO_LARGE;
 			// 명시하지 않은 상태는 계열로 판단한다. 새 상태가 생겨도 5xx 가 400 으로
 			// 둔갑하지 않도록, 모르는 것은 계열을 따라간다.
 			default -> status.is5xxServerError() ? ErrorCode.INTERNAL_ERROR : ErrorCode.REQUEST_INVALID;

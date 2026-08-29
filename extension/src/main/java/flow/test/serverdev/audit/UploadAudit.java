@@ -114,8 +114,17 @@ public class UploadAudit {
 		return new UploadAudit(attempt, UploadResult.ERROR, reasonCode, storedKey);
 	}
 
-	/** 저장이 끝났다. */
+	/**
+	 * 저장이 끝났다. <b>멱등하다</b> — 이미 {@code ALLOWED} 면 아무 일도 하지 않는다.
+	 *
+	 * <p>확정 커밋이 실패했는지 응답만 못 받았는지 호출자는 구분하지 못한다(SPEC §21.6).
+	 * 두 번째 호출에서 예외가 나면, 실제로는 성공한 업로드를 실패로 보고하게 된다.
+	 * {@code ERROR}·{@code BLOCKED} 에서의 전이는 그대로 막는다 — 그것은 되돌리기이지 재시도가 아니다.
+	 */
 	public void markAllowed() {
+		if (result == UploadResult.ALLOWED) {
+			return;
+		}
 		requirePending();
 		this.result = UploadResult.ALLOWED;
 	}
