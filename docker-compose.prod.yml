@@ -14,12 +14,16 @@
 #
 # db·minio 포트는 호스트에 노출하지 않는다. app 만 127.0.0.1 로 열어 nginx 가 프록시한다.
 
+# ★ ports 는 오버라이드에서 병합된다. `ports: []` 로는 기본값을 지우지 못하고 그대로 남는다.
+#   그 상태로 배포하면 서버에 Postgres(15432)와 MinIO(19100/19101)가 0.0.0.0 으로 열린다.
+#   실제로 그렇게 열렸던 것을 확인하고 !override 로 바꿨다. 목록을 비우려면 명시적으로
+#   덮어써야 한다.
 services:
   db:
-    ports: []
+    ports: !override []
 
   minio:
-    ports: []
+    ports: !override []
 
   app:
     # build 를 덮어쓴다. IMAGE_TAG 가 없으면 뜨지 않게 두어, 태그를 빠뜨린 배포가
@@ -27,6 +31,8 @@ services:
     image: "${IMAGE:?IMAGE 를 지정해야 합니다. 예 songchih/extguard 콜론 커밋SHA}"
     build: !reset null
     pull_policy: always
-    ports:
+    # 기본값(0.0.0.0:8080)이 남으면 서버의 다른 서비스와 충돌하고 앱이 공인 IP 에 직접 열린다.
+    # nginx 만 닿을 수 있게 127.0.0.1 에 묶는다.
+    ports: !override
       - "127.0.0.1:18081:8080"
     restart: unless-stopped
