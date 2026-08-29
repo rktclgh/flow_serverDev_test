@@ -189,3 +189,34 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
   color: var(--muted); font-size: 15px; border-radius: 4px;
 }
 .file-delete:hover:not(:disabled) { color: var(--danger); background: #1c2130; }
+
+/* ── 여러 건 선택 ─────────────────────────────────────────── */
+.file-tools {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 12px; padding: 8px 10px;
+  background: #10131a; border: 1px solid var(--line); border-radius: 8px;
+}
+.select-all {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--muted); cursor: pointer;
+}
+.select-all input:disabled { cursor: not-allowed; }
+/* 개수는 오른쪽 버튼과 왼쪽 체크박스 사이를 밀어낸다. */
+.file-tools .muted { margin-left: auto; font-size: 12px; }
+
+.bulk-delete {
+  border: 1px solid var(--line); background: #1c2130; color: var(--text);
+  padding: 5px 12px; border-radius: 6px; font-size: 13px;
+}
+.bulk-delete:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+.bulk-delete:disabled { opacity: .45; cursor: not-allowed; }
+
+/* 체크박스는 삭제 버튼 반대쪽 모서리에 둔다. 둘 다 링크 밖이라 클릭이 섞이지 않는다. */
+.file-select {
+  position: absolute; top: 6px; left: 6px; z-index: 1;
+  margin: 0; cursor: pointer;
+}
+.file-select:disabled { cursor: not-allowed; opacity: .4; }
+
+/* 고른 카드는 테두리로 표시한다. 체크박스만으로는 그리드에서 눈에 잘 안 띈다. */
+.file-card.selected { border-color: var(--accent); background: #131826; }
