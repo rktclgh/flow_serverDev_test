@@ -6,7 +6,15 @@
 
 services:
   db:
-    image: postgres:18-alpine
+    # ★ 17 을 유지한다. 배포 대상 서버가 17.10 이기도 하지만, 18 로 올리면 이 구성 자체가 깨진다.
+    #
+    #   postgres:18 이미지는 PGDATA 를 /var/lib/postgresql/18/docker 로 옮겼고,
+    #   아래처럼 /var/lib/postgresql/data 에 볼륨이 붙어 있으면 그것을 "unused mount/volume" 으로
+    #   판정하고 기동을 거부한다. 빈 볼륨이어도 거부한다 — 실측으로 확인했다.
+    #
+    #   18 로 올리려면 마운트 지점을 /var/lib/postgresql 로 바꿔야 한다.
+    #   그 전까지 이미지 태그만 올리면 db 가 뜨지 않고, depends_on 때문에 app 도 뜨지 않는다.
+    image: postgres:17-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-extguard}
       POSTGRES_USER: ${POSTGRES_USER:-extguard}
@@ -55,7 +63,9 @@ services:
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MINIO_BUCKET: ${MINIO_BUCKET:-extguard-uploads}
-      APP_ADMIN_TOKEN: ${APP_ADMIN_TOKEN:-local-dev-token-change-me}
+      # 필터가 32자 이상을 요구한다(기동 시점 검증). 이 기본값은 로컬 데모 전용이며
+      # 공개 배포에서는 반드시 APP_ADMIN_TOKEN 을 넘겨 덮어써야 한다.
+      APP_ADMIN_TOKEN: ${APP_ADMIN_TOKEN:-local-demo-token-do-not-use-in-production}
       APP_POLICY_ALLOW_EXTENSIONLESS: ${APP_POLICY_ALLOW_EXTENSIONLESS:-false}
       APP_UPLOAD_MAX_SIZE: ${APP_UPLOAD_MAX_SIZE:-10MB}
     ports:

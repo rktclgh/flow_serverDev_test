@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import flow.test.serverdev.support.TestImages;
 
 /**
  * 스키마 제약이 <b>실제로 강제되는지</b> 검증한다. (SPEC §3)
@@ -39,7 +40,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class SchemaConstraintTest {
 
 	@Container
-	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine");
+	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(TestImages.POSTGRES);
 
 	static Connection connection;
 
