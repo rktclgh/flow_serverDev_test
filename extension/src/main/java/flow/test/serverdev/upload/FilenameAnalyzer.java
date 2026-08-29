@@ -51,15 +51,22 @@ public class FilenameAnalyzer {
 	}
 
 	public FilenameAnalysis analyze(String rawFilename) {
-		// 1. null / 공백뿐인 파일명
-		if (rawFilename == null || rawFilename.isBlank()) {
+		// 1. null
+		if (rawFilename == null) {
 			return reject(FilenameRejectReason.EMPTY);
 		}
 
-		// 2. 원시 상한을 정규화 전에 적용한다.
-		//    이 검사가 뒤에 있으면 공격자가 보낸 거대한 문자열을 전부 정규화·순회한 뒤에야 거부한다.
+		// 2. 원시 상한을 가장 먼저 적용한다.
+		//    length() 는 O(1) 이지만 isBlank() 는 O(n) 이라 거대한 공백 문자열이 오면
+		//    상한 검사에 닿기도 전에 전체를 순회한다. 상한의 목적이 비용 상한이므로
+		//    그 앞에 O(n) 연산을 두면 목적이 훼손된다.
 		if (rawFilename.length() > MAX_RAW_LENGTH) {
 			return reject(FilenameRejectReason.TOO_LONG);
+		}
+
+		// 3. 공백뿐인 파일명
+		if (rawFilename.isBlank()) {
+			return reject(FilenameRejectReason.EMPTY);
 		}
 
 		// 3. 유니코드 정규화. 전각 마침표(U+FF0E)가 여기서 ASCII 점이 되어 후행 정리 대상이 된다.
