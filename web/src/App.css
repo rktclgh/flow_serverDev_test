@@ -105,9 +105,43 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
 .reason { color: var(--warn); }
 .queue-item .hint { color: var(--warn); }
 
-.queue-item.done { border-left-color: var(--ok); }
-.queue-item.rejected { border-left-color: var(--danger); }
-.queue-item.failed { border-left-color: var(--danger); }
+/* 큐에는 처리 중인 것만 남는다. 끝난 항목의 색은 토스트가 가져갔다. */
+.queue-item.queued { border-left-color: var(--line); }
 .queue-item.retrying { border-left-color: var(--warn); }
 .queue-item.uploading { border-left-color: var(--accent); }
-.queue-item.cancelled { border-left-color: var(--muted); }
+.queue-empty { font-size: 13px; margin-top: 12px; }
+
+
+/* ── 토스트 ──────────────────────────────────────────────────
+   거부는 1회성으로 알리고 사라진다. 목록에 쌓이면 그것은 알림이 아니라 로그다. */
+.toast-host {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px;
+  width: min(360px, calc(100vw - 32px));
+}
+.toast {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 10px 10px 12px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-left-width: 3px; border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  animation: toast-in .16s ease-out;
+}
+@media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+@keyframes toast-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.toast-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.toast-text strong {
+  font-size: 13px; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.toast-text span { font-size: 12px; color: var(--muted); }
+/* "무엇이 / 왜" 의 근거. 사유가 흐려지면 토스트로 옮긴 의미가 없다. */
+.toast-detail { color: var(--warn) !important; }
+.toast button { border: 0; background: none; padding: 0 4px; color: var(--muted); line-height: 1; }
+.toast button:hover { color: var(--text); }
+
+.toast.success { border-left-color: var(--ok); }
+.toast.error { border-left-color: var(--danger); }
+.toast.warning { border-left-color: var(--warn); }
+.toast.info { border-left-color: var(--accent); }
