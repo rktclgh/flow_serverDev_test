@@ -50,3 +50,19 @@ export class ApiFailure extends Error {
     return this.body?.code ?? null
   }
 }
+
+/**
+ * 업로드된 파일 한 건. (`GET /api/files`)
+ *
+ * `uploadedAt` 은 오프셋을 포함한 ISO-8601 문자열이다 — 화면은 사용자의 지역 시간대로 표시한다.
+ */
+export interface UploadedFile {
+  fileId: string
+  originalFilename: string
+  size: number
+  uploadedAt: string
+}
+
+export interface FileListResponse {
+  files: UploadedFile[]
+}
