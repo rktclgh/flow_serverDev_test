@@ -1,6 +1,8 @@
 package flow.test.serverdev.audit;
 
 import org.springframework.stereotype.Component;
+
+import flow.test.serverdev.storage.StorageKey;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,7 +39,7 @@ public class UploadAuditRecorder {
 	/** 정책과 무관한 실패. 저장을 시도하기 전이라 키가 없다. */
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public void recordError(UploadAttempt attempt, String reasonCode) {
-		repository.save(UploadAudit.error(sanitise(attempt), reasonCode, null));
+		repository.save(UploadAudit.error(sanitise(attempt), reasonCode));
 	}
 
 	/**
@@ -46,11 +48,15 @@ public class UploadAuditRecorder {
 	 * <p>이 커밋이 끝난 뒤에야 스토리지를 호출해야 한다. 순서를 지키지 않으면
 	 * 두 단계 기록이 보장하려던 성질이 사라진다.
 	 *
+	 * <p><b>{@link StorageKey} 를 통째로 받는다.</b> 키 문자열만 받으면 {@code file_id} 를
+	 * 적을 자리가 없어 201 의 {@code fileId} 도 다운로드 조회도 성립하지 않는다. 둘을 따로 받는
+	 * 형태도 가능하지만, 그러면 서로 다른 업로드의 키와 식별자를 섞어 넣을 수 있게 된다.
+	 *
 	 * @return 확정 시 사용할 기록 id
 	 */
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
-	public long beginPending(UploadAttempt attempt, String storedKey) {
-		return repository.save(UploadAudit.pending(sanitise(attempt), storedKey)).id();
+	public long beginPending(UploadAttempt attempt, StorageKey key) {
+		return repository.save(UploadAudit.pending(sanitise(attempt), key)).id();
 	}
 
 	/** 저장이 끝났다. */
