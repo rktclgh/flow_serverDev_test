@@ -117,12 +117,25 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		}
 
 		@Test
-		@DisplayName("확정된 기록은 다시 확정할 수 없다")
-		void cannotConfirmTwice() {
+		@DisplayName("같은 상태로의 재확정은 조용히 통과한다 — 재시도가 실패로 보고되면 안 된다")
+		void confirmingTwiceIsIdempotent() {
 			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/k3");
 			recorder.markAllowed(id);
 
-			assertThatThrownBy(() -> recorder.markAllowed(id))
+			recorder.markAllowed(id);
+
+			assertThat(jdbc.queryForObject(
+				"SELECT result FROM upload_audit WHERE id = ?", String.class, id))
+				.isEqualTo("ALLOWED");
+		}
+
+		@Test
+		@DisplayName("확정된 기록을 다른 상태로 바꿀 수는 없다")
+		void cannotChangeToAnotherState() {
+			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/k3b");
+			recorder.markAllowed(id);
+
+			assertThatThrownBy(() -> recorder.markError(id, "STORAGE_UNAVAILABLE"))
 				.isInstanceOf(IllegalStateException.class);
 		}
 
