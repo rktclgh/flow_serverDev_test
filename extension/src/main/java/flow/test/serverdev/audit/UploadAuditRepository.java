@@ -2,6 +2,8 @@ package flow.test.serverdev.audit;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -40,6 +42,18 @@ public interface UploadAuditRepository extends JpaRepository<UploadAudit, Long> 
 	@Query("SELECT a FROM UploadAudit a WHERE a.result = flow.test.serverdev.audit.UploadResult.PENDING "
 		+ "AND a.occurredAt < :before ORDER BY a.occurredAt")
 	List<UploadAudit> findStalePending(@Param("before") OffsetDateTime before, Pageable pageable);
+
+	/**
+	 * 다운로드가 내보낼 행. (SPEC §7.6)
+	 *
+	 * <p><b>{@code result} 를 조회 조건에 넣는다.</b> 행을 읽어와서 상태를 보고 거르면 그
+	 * 분기를 지워도 대개 "객체가 없어서" 404 가 나와, 방어가 사라진 것을 아무도 눈치채지
+	 * 못한다. 조건이 쿼리에 있으면 그 상태의 행은 <b>애초에 손에 들어오지 않는다.</b>
+	 *
+	 * <p>감사 테이블을 조회 대상으로 쓰는 유일한 지점이다. 이 행이 곧 "그 파일이 무엇이었나"
+	 * 의 기록이고, 같은 사실을 담는 테이블을 하나 더 두면 둘이 어긋날 자리만 는다.
+	 */
+	Optional<UploadAudit> findByFileIdAndResult(UUID fileId, UploadResult result);
 
 	/**
 	 * 이 기록의 <b>청소 소유권</b>을 얻으면서 동시에 {@code ERROR} 로 확정한다. (SPEC §21.6)
