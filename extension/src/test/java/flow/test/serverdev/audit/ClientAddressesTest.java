@@ -52,12 +52,6 @@ class ClientAddressesTest {
 		}
 
 		@Test
-		@DisplayName("존 인덱스가 붙은 링크로컬")
-		void zoneIndex() {
-			assertThat(ClientAddresses.parse("fe80::1%lo0")).isPresent();
-		}
-
-		@Test
 		@DisplayName("앞뒤 공백은 무시한다")
 		void trimmed() {
 			assertThat(ClientAddresses.parse("  192.0.2.1  ")).isPresent();
@@ -131,5 +125,34 @@ class ClientAddressesTest {
 		void forwardedList() {
 			assertThat(ClientAddresses.parse("203.0.113.1, 198.51.100.2")).isEmpty();
 		}
+
+		/**
+		 * ★ 처음에는 이 값을 <b>받도록</b> 테스트를 썼다. 외부 리뷰가 지적해 실측해보니
+		 * 받으면 안 되는 값이었다.
+		 *
+		 * <pre>
+		 * Java      getByName("fe80::1%lo0").getHostAddress()  ->  fe80:0:0:0:0:0:0:1%lo0
+		 * Postgres  INSERT INTO t VALUES ('fe80::1%lo0')       ->  ERROR: invalid input syntax
+		 *           INSERT INTO t VALUES ('fe80::1%1')         ->  ERROR (숫자 스코프도 거부)
+		 * </pre>
+		 *
+		 * 받아들이면 감사 INSERT 가 터지고, 감사 실패는 fail-closed 이므로 요청이 503 이 된다.
+		 * 이 값은 {@code X-Forwarded-For} 에서 오므로 <b>공격자가 그 503 을 마음대로 유발</b>할 수 있다.
+		 * 테스트가 버그를 정답으로 고정하고 있었던 셈이다.
+		 */
+		@Test
+		@DisplayName("존 인덱스가 붙은 주소는 받지 않는다 — INET 이 저장하지 못한다")
+		void scopedIpv6IsRejected() {
+			assertThat(ClientAddresses.parse("fe80::1%lo0")).isEmpty();
+			assertThat(ClientAddresses.parse("fe80::1%1")).isEmpty();
+		}
+
+		/** 스코프가 없는 링크로컬은 INET 이 저장할 수 있으므로 받는다. */
+		@Test
+		@DisplayName("스코프 없는 링크로컬은 받는다")
+		void unscopedLinkLocalIsAccepted() {
+			assertThat(ClientAddresses.parse("fe80::1")).isPresent();
+		}
+
 	}
 }

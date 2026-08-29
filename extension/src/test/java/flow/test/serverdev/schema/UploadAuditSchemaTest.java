@@ -233,6 +233,42 @@ class UploadAuditSchemaTest {
 				.hasMessageContaining("cannot change");
 		}
 
+		/**
+		 * ★ 사건을 설명하는 바로 그 필드다. 여기가 열려 있으면 나머지를 아무리 잠가도
+		 * 기록을 믿을 수 없다. 외부 리뷰가 지적해 추가했다 —
+		 * 트리거가 {@code reason_code} 만 비교 대상에서 빠뜨리고 있었다.
+		 */
+		@Test
+		@DisplayName("확정된 기록의 사유는 고쳐 쓸 수 없다 — BLOCKED")
+		void blockedReasonIsImmutable() throws SQLException {
+			insertBlocked("a.exe", "FILE_BLOCKED_EXTENSION");
+
+			assertThatThrownBy(() -> execute(
+				"UPDATE upload_audit SET reason_code = 'FILE_NAME_INVALID'"))
+				.hasMessageContaining("cannot change reason_code");
+		}
+
+		@Test
+		@DisplayName("확정된 기록의 사유는 고쳐 쓸 수 없다 — ERROR")
+		void errorReasonIsImmutable() throws SQLException {
+			insertError("a.pdf", "STORAGE_UNAVAILABLE", "2026/08/29/k9");
+
+			assertThatThrownBy(() -> execute(
+				"UPDATE upload_audit SET reason_code = 'SOMETHING_ELSE'"))
+				.hasMessageContaining("cannot change reason_code");
+		}
+
+		/** ALLOWED 는 사유가 없는 것이 정상이다. 나중에 붙일 수도 없어야 한다. */
+		@Test
+		@DisplayName("성공한 기록에 사유를 나중에 붙일 수 없다")
+		void allowedCannotGainReason() throws SQLException {
+			insertAllowed("a.pdf", "2026/08/29/k10");
+
+			assertThatThrownBy(() -> execute(
+				"UPDATE upload_audit SET reason_code = 'INVENTED'"))
+				.hasMessageContaining("cannot change reason_code");
+		}
+
 		@Test
 		@DisplayName("기록된 사실은 바꿀 수 없다 — 파일명")
 		void filenameIsImmutable() throws SQLException {
