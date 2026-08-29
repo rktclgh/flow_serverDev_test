@@ -68,10 +68,14 @@ public class PolicyController {
 		return item;
 	}
 
+	/**
+	 * 기록에는 경로에 담겨온 값이 아니라 <b>실제로 지워진 정규화된 이름</b>을 남긴다.
+	 * 토글·추가가 이미 그렇게 하고 있어 삭제만 다르면 같은 로그에서 값의 의미가 달라진다.
+	 */
 	@DeleteMapping("/custom/{name}")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void deleteCustom(@PathVariable String name, HttpServletRequest http) {
-		policyService.deleteCustom(name);
-		auditLogger.changed("CUSTOM_DELETE", name, http);
+		PolicyResponse.CustomItem deleted = policyService.deleteCustom(name);
+		auditLogger.changed("CUSTOM_DELETE", deleted.name(), http);
 	}
 }

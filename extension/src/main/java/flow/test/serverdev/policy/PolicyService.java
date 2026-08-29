@@ -137,8 +137,15 @@ public class PolicyService {
 			"다른 요청과 겹쳐 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
 	}
 
+	/**
+	 * 커스텀 확장자를 삭제하고 <b>실제로 지워진 정규화된 이름</b>을 돌려준다.
+	 *
+	 * <p>반환값이 필요한 이유는 감사 기록 때문이다. 호출자가 입력값을 그대로 기록하면
+	 * 정규화가 개입한 요청에서 기록과 저장소가 어긋난다 — {@code .SH} 를 지웠다고 적히지만
+	 * 실제로 사라진 것은 {@code sh} 다. 기록이 사실과 다르면 감사 기록의 의미가 없다.
+	 */
 	@Transactional
-	public void deleteCustom(String rawName) {
+	public PolicyResponse.CustomItem deleteCustom(String rawName) {
 		String name = normalizeForLookup(rawName);
 
 		ExtensionType type = repository.findTypeByName(name).orElseThrow(() -> notFound(name));
@@ -155,6 +162,8 @@ public class PolicyService {
 			// 404 로 알리는 편이 정직하다 — 지우지 않았는데 204 를 주면 감사 로그가 거짓이 된다.
 			throw notFound(name);
 		}
+
+		return new PolicyResponse.CustomItem(name);
 	}
 
 	// --- 내부 ---------------------------------------------------------------
