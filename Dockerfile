@@ -6,8 +6,15 @@
 #   - nginx 는 upstream 하나만 알면 된다
 #   - 프론트/백 배포가 원자적으로 함께 일어난다
 
+# ★ 빌드 스테이지는 BUILDPLATFORM(빌드하는 기계)에서 돌린다.
+#
+#   로컬은 arm64(Apple Silicon)이고 배포 서버는 x86_64 다. 그대로 --platform linux/amd64 로
+#   빌드하면 npm ci 와 gradle bootJar 가 QEMU 에뮬레이션 위에서 돌아 수십 배 느려진다.
+#   그런데 JS 번들과 JVM jar 는 <b>아키텍처에 무관한 산출물</b>이다. 빌드는 네이티브로 하고
+#   런타임 스테이지만 대상 아키텍처로 만들면, 에뮬레이션은 런타임의 adduser 한 줄에만 걸린다.
+
 # ── 1. 프론트엔드 빌드 ────────────────────────────────────────────────
-FROM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /web
 
 COPY web/package.json web/package-lock.json ./
@@ -19,7 +26,7 @@ RUN npm run build
 # ── 2. 백엔드 빌드 ────────────────────────────────────────────────────
 # gradle 배포판 이미지 대신 wrapper 를 쓴다.
 # wrapper 가 gradle-wrapper.properties 의 버전을 고정하므로 로컬·CI·서버가 같은 빌드를 낸다.
-FROM eclipse-temurin:21-jdk AS build
+FROM --platform=$BUILDPLATFORM eclipse-temurin:21-jdk AS build
 WORKDIR /src
 
 # 의존성 레이어를 소스와 분리해 캐시 적중률을 높인다

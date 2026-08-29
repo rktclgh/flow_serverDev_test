@@ -1,122 +1,39 @@
-import { useState } from 'react'
-import heroImg from './assets/hero.png'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useCallback, useState } from 'react'
+import { AdminToken } from './components/AdminToken'
+import { FilePanel } from './components/FilePanel'
+import { PolicyPanel } from './components/PolicyPanel'
+import { ToastHost } from './components/ToastHost'
+import { UploadPanel } from './components/UploadPanel'
+import { readAdminToken } from './api/client'
+import type { PolicyResponse } from './api/types'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const [policy, setPolicy] = useState<PolicyResponse | null>(null)
+  const onPolicyChange = useCallback((next: PolicyResponse) => setPolicy(next), [])
+
+  /**
+   * 토큰 자체는 sessionStorage 가 갖고 있지만 그 변화는 React 가 모른다.
+   * 삭제 버튼의 활성 여부가 토큰 유무에 달려 있으므로 "있는가" 만 여기서 들고 있는다.
+   * 값을 state 로 끌어올리지 않는 이유는 토큰을 컴포넌트 트리에 흘리지 않기 위해서다.
+   */
+  const [hasAdminToken, setHasAdminToken] = useState(() => readAdminToken().length > 0)
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <div className="app">
+      <header>
+        <h1>ExtGuard</h1>
+        <p className="muted">차단할 확장자를 정하고, 그 정책으로 파일 업로드를 막습니다.</p>
+        <AdminToken onSaved={(token) => setHasAdminToken(token.length > 0)} />
+      </header>
 
-      <div className="ticks"></div>
+      <main>
+        <PolicyPanel onPolicyChange={onPolicyChange} />
+        <UploadPanel policy={policy} />
+        <FilePanel hasAdminToken={hasAdminToken} />
+      </main>
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
-
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
+      <ToastHost />
+    </div>
   )
 }
-
-export default App
