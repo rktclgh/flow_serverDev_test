@@ -346,3 +346,56 @@ CUSTOM 행에 custom_slot 이 NULL 인 경우
 | 슬롯 UNIQUE | 실패 — 감지 |
 | 고정 삭제 방지 트리거 | 실패 — 감지 |
 | `updated_at` 트리거 | 실패 — 감지 |
+
+### 외부 리뷰로 드러난 우회 경로
+
+"도메인 불변식을 DB 가 지킨다" 는 첫 구현의 주장은 **절반만 사실이었다.**
+CUSTOM 200개 상한은 지켜졌지만 고정 확장자 7개는 전혀 지켜지지 않았다.
+실제 PostgreSQL 18 에서 재현한 뒤 막았다.
+
+| 우회 | 원인 | 대응 |
+|---|---|---|
+| `INSERT ... type='FIXED'` 로 201개 추가 | FIXED 의 이름·개수에 제약이 없었다 | `ck_fixed_names` — 이름을 7개로 못박음. `UNIQUE(name)` 과 결합해 최대 7행 |
+| `UPDATE type='CUSTOM'` → `DELETE` | 삭제 트리거가 `OLD.type` 만 검사한다 | `protect_fixed_row` BEFORE UPDATE — FIXED 는 `is_blocked` 외 변경 금지 |
+| `ON CONFLICT (name) DO UPDATE` 로 변조 | 같은 경로 | 위와 동일 |
+| `UPDATE name='zip'` 으로 개명 | 같은 경로 | 위와 동일 |
+| `TRUNCATE` | 행 단위 DELETE 트리거를 실행하지 않는다 | `BEFORE TRUNCATE` 문 단위 트리거 |
+
+**삭제를 막는 것만으로는 삭제를 막을 수 없었다.** 행을 다른 종류로 바꾼 뒤 지우면 됐다.
+불변식을 지키려면 "지우지 못하게" 가 아니라 **"그 행의 정체성을 바꾸지 못하게"** 해야 했다.
+
+### 이 방어의 한계 — 소유자는 막지 못한다
+
+트리거와 제약은 **테이블 소유자를 막지 못한다.** 소유자는 다음을 할 수 있다.
+
+```sql
+ALTER TABLE blocked_extension DROP CONSTRAINT ck_custom_slot;
+ALTER TABLE blocked_extension DISABLE TRIGGER ALL;
+SET session_replication_role = replica;   -- superuser
+```
+
+현재 구성은 Flyway 와 애플리케이션이 같은 DB 계정을 쓰므로, 그 계정이 곧 테이블 소유자다.
+
+**정석은 계정 분리다.** 마이그레이션 계정이 스키마를 소유하고, 런타임 계정에는
+`SELECT/INSERT/UPDATE/DELETE` 만 부여하며 DDL·TRUNCATE 권한을 회수한다.
+
+구현하지 않았다. 과제 3장 어디에도 없는 항목이고, compose 구성과 배포 절차가 복잡해지는 데 비해
+평가에 기여하지 않는다고 판단했다. 대신 **한계를 트리거 주석과 이 문서에 명시**한다.
+운영 서비스라면 반드시 분리해야 한다.
+
+### 문서와 스키마가 어긋나는 문제
+
+`db/schema.sql` 은 Flyway 가 읽지 않는 문서다. 사람이 손으로 동기화해야 하므로
+시간이 지나면 어긋난다. **어긋난 문서는 없는 문서보다 나쁘다** — 읽는 사람이 틀린 정보를 믿는다.
+
+`SchemaDriftTest` 로 검증한다. 같은 DB 에 스키마 두 개를 만들어 한쪽엔 마이그레이션을,
+다른 쪽엔 `schema.sql` 을 적용한 뒤 컬럼·제약(`pg_get_constraintdef` 로 정의까지)·트리거를 대조한다.
+CI 에서 드리프트가 잡힌다.
+
+### 아직 남은 것 — 정책 revision
+
+업로드 감사(`upload_audit`)가 "어떤 정책 상태로 판정했는가" 를 복원할 수 없다.
+커스텀 확장자는 하드 삭제되고 슬롯은 재사용되며 고정 정책은 제자리 갱신되기 때문이다.
+
+정책 변경을 append-only 이벤트로 남기고 업로드 감사에 평가된 revision 을 기록해야 한다.
+정책 변경 이력(과제 3-2)을 구현하는 단계에서 함께 다룬다.
