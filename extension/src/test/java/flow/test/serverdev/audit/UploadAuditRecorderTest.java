@@ -194,4 +194,40 @@ class UploadAuditRecorderTest extends IntegrationTest {
 	private static UploadAttempt attempt(String filename) {
 		return new UploadAttempt(filename, null, 1024L, null, null);
 	}
+
+	@Nested
+	@DisplayName("청소 소유권 (claimAbandoned)")
+	class ClaimAbandoned {
+
+		/**
+		 * ★ 조건절({@code AND result = 'PENDING'})이 <b>실제로 일하는지</b> 확인한다.
+		 *
+		 * <p>조건을 지워도 스위퍼 테스트는 전부 통과한다 — DB 트리거가 {@code ALLOWED → ERROR}
+		 * 를 막아 예외를 던지고, 스위퍼가 그것을 잡아 객체를 지우지 않기 때문이다. 즉 두 방어가
+		 * 겹쳐 있어 하나를 빼도 결과가 같다.
+	 *
+		 * <p>그래서 <b>결과가 아니라 방식</b>을 고정한다. 조건절이 있으면 <b>조용히 0을 돌려주고</b>,
+		 * 없으면 트리거가 예외를 던진다. 예외에 기대는 정상 흐름은 로그를 오염시키고, 트리거가
+		 * 언젠가 완화되면 그대로 뚫린다.
+		 */
+		@Test
+		@DisplayName("ALLOWED 로 확정된 행은 예외가 아니라 0을 돌려준다")
+		void allowedRowIsNotClaimed() {
+			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/claim1");
+			recorder.markAllowed(id);
+
+			assertThat(repository.claimAbandoned(id, "UPLOAD_ABANDONED")).isZero();
+		}
+
+		@Test
+		@DisplayName("PENDING 행은 1을 돌려주고 ERROR 로 확정된다")
+		void pendingRowIsClaimed() {
+			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/claim2");
+
+			assertThat(repository.claimAbandoned(id, "UPLOAD_ABANDONED")).isEqualTo(1);
+			assertThat(jdbc.queryForObject(
+				"SELECT result FROM upload_audit WHERE id = ?", String.class, id)).isEqualTo("ERROR");
+		}
+	}
+
 }
