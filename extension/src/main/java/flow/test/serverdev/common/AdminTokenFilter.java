@@ -32,6 +32,14 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 	private static final String HEADER = "X-Admin-Token";
 	private static final String PROTECTED_PREFIX = "/api/extensions";
 
+	/**
+	 * 최소 토큰 길이. SPEC §7.0 이 요구하는 값이며 <b>기동 시점에 강제한다</b>.
+	 *
+	 * <p>32자는 임의의 숫자가 아니다. 이 토큰은 만료도 잠금도 없고 요청마다 그대로 전송되므로
+	 * 사실상 무제한 시도가 가능하다. 짧은 토큰은 그 조건에서 의미가 없다.
+	 */
+	private static final int MIN_TOKEN_LENGTH = 32;
+
 	/** 상태를 바꾸지 않는 메서드. 정책 조회는 공개이므로 이들은 토큰을 요구하지 않는다. */
 	private static final Set<String> SAFE_METHODS =
 		Set.of(HttpMethod.GET.name(), HttpMethod.HEAD.name(), HttpMethod.OPTIONS.name());
@@ -41,6 +49,22 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 
 	public AdminTokenFilter(@Value("${app.admin-token:}") String adminToken) {
 		this.configured = adminToken != null && !adminToken.isBlank();
+
+		// 약한 토큰은 기동을 실패시킨다.
+		//
+		// 미설정을 fail-closed 로 막아놓고 짧은 토큰은 조용히 받아들이면 앞뒤가 맞지 않는다.
+		// 오히려 후자가 더 위험하다 — 미설정은 아무도 못 바꾸지만, 약한 토큰은 누군가
+		// 바꿀 수 있다는 뜻이고, 관리자는 보호되고 있다고 믿는다.
+		//
+		// 런타임 거부가 아니라 기동 실패인 이유: 설정 실수는 첫 요청이 아니라 배포 시점에
+		// 드러나야 한다. 요청이 올 때까지 모른다면 이미 공개된 뒤다.
+		if (configured && adminToken.length() < MIN_TOKEN_LENGTH) {
+			throw new IllegalStateException(
+				"app.admin-token 은 최소 %d자여야 합니다. 현재 %d자입니다. "
+					.formatted(MIN_TOKEN_LENGTH, adminToken.length())
+					+ "만료도 잠금도 없는 토큰이라 짧으면 방어가 되지 않습니다.");
+		}
+
 		this.expectedToken = configured ? adminToken.getBytes(StandardCharsets.UTF_8) : new byte[0];
 	}
 
