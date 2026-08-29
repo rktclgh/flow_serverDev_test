@@ -16,7 +16,7 @@
 --   앱 검사는 사용자에게 친절한 오류를 주기 위한 것이고,
 --   정합성 보증은 아래 제약과 트리거가 담당한다. API 를 우회해도 지켜져야 한다.
 --
--- 반영된 migration : V1, V2
+-- 반영된 migration : V1, V2, V3, V4
 -- =============================================================================
 
 
@@ -199,6 +199,8 @@ INSERT INTO blocked_extension (name, type, is_blocked) VALUES
 --   matched_extension  VARCHAR(20)  차단에 걸린 확장자 (정규화된 형태)
 --   note               VARCHAR(40)  차단하지 않았으나 관측된 신호
 --   stored_key         TEXT         오브젝트 스토리지 키. yyyy/MM/dd/{UUID}
+--   file_id            UUID         클라이언트에 노출되는 파일 식별자. 다운로드가 이 값으로 조회한다
+--   deleted_at         TIMESTAMPTZ  객체를 지운 시각. 행은 남는다 (NULL = 살아 있음)
 --
 -- ★ 두 단계 기록 (PENDING)
 --
@@ -231,6 +233,14 @@ CREATE TABLE upload_audit (
     note               VARCHAR(40),
     stored_key         TEXT,
 
+    -- 클라이언트에 노출되는 식별자. 순차 id 를 내보내지 않으므로 열거할 수 없다.
+    -- stored_key 문자열에서 UUID 를 다시 파싱하면 LIKE 조회가 되어 인덱스를 타지 못한다.
+    file_id            UUID,
+
+    -- 객체를 지운 시각. 행은 지우지 않는다 — 삭제도 일어난 일이고, 행을 지우면
+    -- "무엇이 왜 올라갔는가" 를 함께 잃는다. NULL 이면 살아 있는 파일이다.
+    deleted_at         TIMESTAMPTZ,
+
     CONSTRAINT ck_upload_audit_result CHECK (
         result IN ('ALLOWED', 'BLOCKED', 'ERROR', 'PENDING')
     ),
@@ -254,7 +264,26 @@ CREATE TABLE upload_audit (
 
     CONSTRAINT ck_upload_audit_size CHECK (size_bytes IS NULL OR size_bytes >= 0),
 
-    CONSTRAINT uq_upload_audit_stored_key UNIQUE (stored_key)
+    -- 상태와 식별자의 정합. stored_key 와 같은 모양이다.
+    CONSTRAINT ck_upload_audit_result_file_id CHECK (
+        (result IN ('ALLOWED', 'PENDING') AND file_id IS NOT NULL)
+        OR (result = 'BLOCKED' AND file_id IS NULL)
+        OR result = 'ERROR'
+    ),
+
+    -- 키는 있는데 식별자가 없는 행을 막는다. 객체는 저장됐을 수 있는데 아무도 지목할 수 없다.
+    CONSTRAINT ck_upload_audit_stored_key_file_id CHECK (
+        stored_key IS NULL OR file_id IS NOT NULL
+    ),
+
+    CONSTRAINT uq_upload_audit_stored_key UNIQUE (stored_key),
+
+    -- 지운 적 없는 것을 지웠다고 적을 수 없다. 객체가 존재하는 것이 보증된 상태는 ALLOWED 뿐이다.
+    CONSTRAINT ck_upload_audit_deleted_at CHECK (
+        deleted_at IS NULL OR result = 'ALLOWED'
+    ),
+
+    CONSTRAINT uq_upload_audit_file_id UNIQUE (file_id)
 );
 
 CREATE INDEX idx_upload_audit_occurred_at ON upload_audit (occurred_at DESC);
@@ -262,6 +291,11 @@ CREATE INDEX idx_upload_audit_occurred_at ON upload_audit (occurred_at DESC);
 -- 미완료 기록만 훑는 부분 인덱스. 전체의 극소수라 작게 유지된다.
 CREATE INDEX idx_upload_audit_pending ON upload_audit (occurred_at)
     WHERE result = 'PENDING';
+
+-- 목록 조회(GET /api/files)가 타는 부분 인덱스. 보여줄 행만 담는다 —
+-- 차단 기록이 아무리 쌓여도 목록 조회 비용이 그만큼 늘지 않는다.
+CREATE INDEX idx_upload_audit_visible ON upload_audit (occurred_at DESC)
+    WHERE result = 'ALLOWED' AND deleted_at IS NULL;
 
 -- 기록은 고쳐 쓸 수 없다.
 --
@@ -279,7 +313,8 @@ BEGIN
        OR NEW.size_bytes IS DISTINCT FROM OLD.size_bytes
        OR NEW.matched_extension IS DISTINCT FROM OLD.matched_extension
        OR NEW.note IS DISTINCT FROM OLD.note
-       OR NEW.stored_key IS DISTINCT FROM OLD.stored_key THEN
+       OR NEW.stored_key IS DISTINCT FROM OLD.stored_key
+       OR NEW.file_id IS DISTINCT FROM OLD.file_id THEN
         RAISE EXCEPTION 'audit record cannot change: only result may transition (id=%)', OLD.id;
     END IF;
 
@@ -298,6 +333,12 @@ BEGIN
     IF NEW.reason_code IS DISTINCT FROM OLD.reason_code
        AND NOT (OLD.result = 'PENDING' AND NEW.result = 'ERROR') THEN
         RAISE EXCEPTION 'audit record cannot change reason_code (id=%)', OLD.id;
+    END IF;
+
+    -- deleted_at 은 NULL -> 시각으로 한 번만. 시각 -> 다른 시각도, 시각 -> NULL 도 막는다.
+    -- 되돌릴 수 있으면 "지웠다" 는 사실을 없던 일로 만들 수 있고, 그것은 기록 조작이다.
+    IF OLD.deleted_at IS NOT NULL AND NEW.deleted_at IS DISTINCT FROM OLD.deleted_at THEN
+        RAISE EXCEPTION 'audit record cannot change deleted_at once set (id=%)', OLD.id;
     END IF;
 
     RETURN NEW;

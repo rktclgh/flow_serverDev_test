@@ -142,6 +142,143 @@ class AdminTokenFilterTest {
 		}
 	}
 
+	/**
+	 * 파일 삭제는 <b>파괴적</b>이라 정책 변경과 같은 등급으로 다룬다.
+	 *
+	 * <p>업로드·조회·다운로드는 공개다 — 과제가 "누구나 접속 가능" 을 요구하는 것은 그쪽이다.
+	 * 삭제까지 공개로 두면 누구나 남의 파일을 지울 수 있고, 그러면 목록도 다운로드도
+	 * 의미가 없어진다. <b>같은 경로 접두사에서 메서드만 갈라진다.</b>
+	 */
+	@Nested
+	@DisplayName("파일 삭제 — DELETE 만 보호한다")
+	class FileDeletion {
+
+		private static final String FILE = "/api/files/9f2c8a1e-0000-0000-0000-000000000000";
+
+		@Test
+		@DisplayName("토큰 없는 DELETE 는 거부한다")
+		void deleteRequiresToken() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "DELETE", FILE, null);
+
+			assertThat(response.getStatus()).isEqualTo(401);
+			assertThat(response.getContentAsString()).contains("ADMIN_TOKEN_REQUIRED");
+		}
+
+		@Test
+		@DisplayName("틀린 토큰의 DELETE 는 거부한다")
+		void deleteRejectsWrongToken() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "DELETE", FILE, "wrong");
+
+			assertThat(response.getStatus()).isEqualTo(401);
+			assertThat(response.getContentAsString()).contains("ADMIN_TOKEN_INVALID");
+		}
+
+		@Test
+		@DisplayName("올바른 토큰의 DELETE 는 통과한다")
+		void deleteWithToken() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "DELETE", FILE, VALID_TOKEN);
+
+			assertThat(response.getStatus()).isEqualTo(200);
+		}
+
+		@Test
+		@DisplayName("업로드(POST)는 여전히 공개다")
+		void uploadStaysPublic() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "POST", "/api/files", null);
+
+			assertThat(response.getStatus()).isEqualTo(200);
+		}
+
+		@Test
+		@DisplayName("목록(GET)은 여전히 공개다")
+		void listStaysPublic() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "GET", "/api/files", null);
+
+			assertThat(response.getStatus()).isEqualTo(200);
+		}
+
+		/**
+		 * 미설정일 때도 fail-closed 다. 관리 기능이 <b>인증 없음</b>으로 조용히 전락하는 것을
+		 * 막는 규칙이 삭제에도 그대로 적용돼야 한다.
+		 */
+		@Test
+		@DisplayName("토큰 미설정이면 삭제도 거부한다 — fail-closed")
+		void unsetTokenBlocksDelete() throws Exception {
+			MockHttpServletResponse response = run(new AdminTokenFilter(""), "DELETE", FILE, null);
+
+			assertThat(response.getStatus()).isEqualTo(401);
+			assertThat(response.getContentAsString()).contains("ADMIN_TOKEN_NOT_CONFIGURED");
+		}
+	}
+
+	/**
+	 * 경로 판정을 스프링의 매핑 엔진에 맡긴 결과 <b>경계가 정확해졌다</b>.
+	 *
+	 * <p>옛 구현은 {@code startsWith("/api/extensions")} 라, 존재하지도 않는
+	 * {@code /api/extensions-foo} 까지 보호 대상으로 삼았다. 안전한 쪽으로 틀린 것이지만
+	 * 틀린 것은 틀린 것이다 — 인가 규칙이 실제 리소스 경계와 다르면, 어느 쪽이 의도인지
+	 * 다음 사람이 알 수 없다.
+	 */
+	@Nested
+	@DisplayName("경로 경계 — 매핑과 같은 눈으로 본다")
+	class PathBoundary {
+
+		/** {@code /}{@code **} 는 0개 이상의 세그먼트를 받는다. 컬렉션 자체도 보호 대상이다. */
+		@Test
+		@DisplayName("/api/extensions 자체도 보호한다")
+		void collectionRootIsProtected() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "POST", "/api/extensions", null);
+
+			assertThat(response.getStatus()).isEqualTo(401);
+		}
+
+		/**
+		 * 이웃 경로는 보호 대상이 아니다. 그런 리소스가 없으므로 매핑이 404 로 답한다 —
+		 * 없는 것을 지키는 것은 보안 성질이 아니다.
+		 */
+		@Test
+		@DisplayName("/api/extensions-foo 는 보호 대상이 아니다 — 그런 리소스가 없다")
+		void neighbouringPathIsNotProtected() throws Exception {
+			MockHttpServletResponse response =
+				run(new AdminTokenFilter(VALID_TOKEN), "POST", "/api/extensions-foo", null);
+
+			assertThat(response.getStatus()).isEqualTo(200);
+		}
+
+		/**
+		 * ★ 필터가 <b>디코딩된 경로</b>로 판정한다. 날 것의 문자열로 보면 이 요청이
+		 * 보호 대상에서 빠져나가고, 그 뒤 매핑은 {@code %66} 을 {@code f} 로 읽어
+		 * 컨트롤러로 보낸다 — 실제로 파일이 지워졌다({@code AdminTokenPathBypassTest}).
+		 */
+		@Test
+		@DisplayName("인코딩된 경로도 같은 것으로 읽는다 — /api/%66iles")
+		void decodesBeforeMatching() throws Exception {
+			MockHttpServletResponse response = run(new AdminTokenFilter(VALID_TOKEN),
+				"DELETE", "/api/%66iles/9f2c8a1e-0000-0000-0000-000000000000", null);
+
+			assertThat(response.getStatus())
+				.as("%66 는 f 다. 매핑이 그렇게 읽으면 인가도 그렇게 읽어야 한다")
+				.isEqualTo(401);
+			assertThat(response.getContentAsString()).contains("ADMIN_TOKEN_REQUIRED");
+		}
+
+		/** 매트릭스 파라미터는 경로의 일부가 아니다. 붙여서 판정을 흐릴 수 없다. */
+		@Test
+		@DisplayName("매트릭스 파라미터를 붙여도 같은 것으로 읽는다")
+		void stripsMatrixParameters() throws Exception {
+			MockHttpServletResponse response = run(new AdminTokenFilter(VALID_TOKEN),
+				"DELETE", "/api/files;v=1/9f2c8a1e-0000-0000-0000-000000000000", null);
+
+			assertThat(response.getStatus()).isEqualTo(401);
+		}
+	}
+
 	/** 필터를 한 번 통과시킨다. 체인까지 갔으면 상태가 200 으로 남는다. */
 	private MockHttpServletResponse run(AdminTokenFilter filter, String method, String uri,
 			String token) throws Exception {
