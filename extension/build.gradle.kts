@@ -46,7 +46,6 @@ dependencies {
 	testImplementation("org.testcontainers:postgresql")
 	testImplementation("org.testcontainers:minio")
 
-	testImplementation("net.jqwik:jqwik:1.10.1")
 	testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
