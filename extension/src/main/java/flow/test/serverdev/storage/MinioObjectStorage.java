@@ -91,8 +91,13 @@ public class MinioObjectStorage implements ObjectStorage {
 				.stream(content, size, SINGLE_PART)
 				.contentType(FORCED_CONTENT_TYPE)
 				.build());
-		} catch (MinioException e) {
+		} catch (ErrorResponseException e) {
+			// 서버가 요청을 받고 거부했다. 객체가 없는 것이 확실하다.
 			throw new StorageException("객체를 저장하지 못했습니다: " + key.value(), e);
+		} catch (MinioException e) {
+			// 전송·타임아웃 실패. 서버에 닿았는지조차 모른다.
+			throw new StorageOutcomeUnknownException(
+				"객체 저장 결과를 확인할 수 없습니다: " + key.value(), e);
 		}
 	}
 
