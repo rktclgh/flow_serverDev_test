@@ -137,6 +137,218 @@ class FileDeleteControllerTest extends IntegrationTest {
 		return names;
 	}
 
+
+	/** 여러 건을 한 번에 지우는 요청 본문. */
+	private String idsBody(UUID... fileIds) throws Exception {
+		List<String> values = new ArrayList<>();
+		for (UUID fileId : fileIds) {
+			values.add(fileId.toString());
+		}
+		return json.writeValueAsString(Map.of("fileIds", values));
+	}
+
+	/**
+	 * 여러 건을 한 번에 지운다. (DELETE /api/files)
+	 *
+	 * <p><b>단건과 다른 점은 실패의 모양이다.</b> 목록은 낡을 수 있다 — 다른 탭에서 이미
+	 * 지웠거나, 스위퍼가 걷어간 뒤일 수 있다. 그때 요청 전체를 거부하면 사용자는 새로고침 후
+	 * 다시 고르는 일을 반복하게 된다. 그래서 <b>건별로 답한다</b>: 지운 것은 지우고,
+	 * 없던 것은 없었다고 알린다.
+	 *
+	 * <p>순서 계약은 단건과 <b>같다</b>. 소유권을 먼저 얻고 그다음에 객체를 지운다.
+	 * 여러 건이라고 해서 이 순서가 느슨해지면 안 된다.
+	 */
+	@Nested
+	@DisplayName("여러 건을 한 번에 지운다")
+	class DeletesMany {
+
+		@Test
+		@DisplayName("두 건을 지우면 둘 다 목록에서 사라진다")
+		void removesAll() throws Exception {
+			UUID first = upload("first.pdf");
+			UUID second = upload("second.pdf");
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(first, second)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.deleted.length()").value(2))
+				.andExpect(jsonPath("$.notFound.length()").value(0));
+
+			assertThat(listedNames()).isEmpty();
+		}
+
+		/** 목록에서 빠지는 것만으로는 부족하다. 바이트가 실제로 없어져야 지운 것이다. */
+		@Test
+		@DisplayName("객체가 실제로 전부 없어진다")
+		void removesEveryObject() throws Exception {
+			UUID first = upload("first.pdf");
+			UUID second = upload("second.pdf");
+			String firstKey = storedKeyOf(first);
+			String secondKey = storedKeyOf(second);
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(first, second)))
+				.andExpect(status().isOk());
+
+			assertThatThrownBy(() -> storage.load(firstKey))
+				.isInstanceOf(StorageObjectNotFoundException.class);
+			assertThatThrownBy(() -> storage.load(secondKey))
+				.isInstanceOf(StorageObjectNotFoundException.class);
+		}
+
+		/**
+		 * ★ 낡은 목록이 나머지를 막지 않는다.
+		 *
+		 * <p>이 한 건 때문에 전체가 거부되면, 사용자는 새로고침하고 다시 고르는 일을
+		 * 반복하게 된다. 지울 수 있는 것은 지우고 나머지를 알려준다.
+		 */
+		@Test
+		@DisplayName("없는 id 가 섞여 있어도 있는 것은 지운다")
+		void deletesWhatExists() throws Exception {
+			UUID existing = upload("keep-going.pdf");
+			UUID missing = UUID.randomUUID();
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(existing, missing)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.deleted[0]").value(existing.toString()))
+				.andExpect(jsonPath("$.notFound[0]").value(missing.toString()));
+
+			assertThat(listedNames()).isEmpty();
+		}
+
+		/**
+		 * 같은 id 를 두 번 보내면 두 번째는 소유권을 얻지 못한다. 그것을 "없다" 로 답하면
+		 * 한 파일이 <b>지웠음과 없음에 동시에</b> 나타난다 — 화면이 설명할 수 없는 상태다.
+		 */
+		@Test
+		@DisplayName("같은 id 가 중복돼도 한 번만 처리한다")
+		void deduplicates() throws Exception {
+			UUID fileId = upload("once.pdf");
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(fileId, fileId)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.deleted.length()").value(1))
+				.andExpect(jsonPath("$.notFound.length()").value(0));
+		}
+
+		/** 이미 지운 것을 다시 고른 경우. 두 번 지워지지 않는다. */
+		@Test
+		@DisplayName("이미 지운 파일은 없다고 답한다")
+		void alreadyDeleted() throws Exception {
+			UUID fileId = upload("gone.pdf");
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(fileId)))
+				.andExpect(status().isOk());
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(fileId)))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.deleted.length()").value(0))
+				.andExpect(jsonPath("$.notFound[0]").value(fileId.toString()));
+		}
+
+		/** 단건과 같은 계약이다. 여러 건이라고 기록이 사라지면 안 된다. */
+		@Test
+		@DisplayName("기록은 전부 남는다")
+		void keepsEveryAuditRow() throws Exception {
+			UUID first = upload("first.pdf");
+			UUID second = upload("second.pdf");
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(first, second)))
+				.andExpect(status().isOk());
+
+			Long rows = jdbc.queryForObject(
+				"SELECT count(*) FROM upload_audit WHERE deleted_at IS NOT NULL", Long.class);
+			assertThat(rows).isEqualTo(2L);
+		}
+
+		/**
+		 * ★ 순서 계약. 여러 건에서도 소유권이 객체 삭제보다 앞선다.
+		 *
+		 * <p>반대로 하면 객체는 없는데 {@code deleted_at} 은 NULL 인 행이 남아
+		 * 목록에는 보이는데 다운로드는 404 가 된다.
+		 */
+		@Test
+		@DisplayName("건마다 소유권을 먼저 얻은 뒤 객체를 지운다")
+		void claimsBeforeDeleting() throws Exception {
+			UUID first = upload("first.pdf");
+			UUID second = upload("second.pdf");
+			String firstKey = storedKeyOf(first);
+			String secondKey = storedKeyOf(second);
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(first, second)))
+				.andExpect(status().isOk());
+
+			assertThat(observer().rowWasMarkedWhenDeleted(firstKey)).isTrue();
+			assertThat(observer().rowWasMarkedWhenDeleted(secondKey)).isTrue();
+		}
+
+		@Test
+		@DisplayName("빈 목록은 거부한다")
+		void rejectsEmpty() throws Exception {
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content("{\"fileIds\": []}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("REQUEST_INVALID"));
+		}
+
+		/**
+		 * 상한이 없으면 요청 하나가 임의로 많은 객체 삭제를 일으킨다. 화면에서 고를 수 있는
+		 * 수를 훨씬 웃도는 값이므로 정상 사용에는 걸리지 않는다.
+		 */
+		@Test
+		@DisplayName("상한(100)을 넘으면 거부한다")
+		void rejectsTooMany() throws Exception {
+			List<String> tooMany = new ArrayList<>();
+			for (int i = 0; i < 101; i++) {
+				tooMany.add(UUID.randomUUID().toString());
+			}
+
+			mockMvc.perform(delete("/api/files")
+					.header("X-Admin-Token", ADMIN_TOKEN)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(json.writeValueAsString(Map.of("fileIds", tooMany))))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.code").value("REQUEST_INVALID"));
+		}
+
+		/** 단건 삭제와 같은 등급이다. 컬렉션 경로라고 열려 있으면 안 된다. */
+		@Test
+		@DisplayName("토큰이 없으면 401 이고 아무것도 지우지 않는다")
+		void requiresAdminToken() throws Exception {
+			UUID fileId = upload("protected.pdf");
+
+			mockMvc.perform(delete("/api/files")
+					.contentType(MediaType.APPLICATION_JSON)
+					.content(idsBody(fileId)))
+				.andExpect(status().isUnauthorized());
+
+			assertThat(listedNames()).containsExactly("protected.pdf");
+		}
+	}
 	@Nested
 	@DisplayName("지운다")
 	class Deletes {
