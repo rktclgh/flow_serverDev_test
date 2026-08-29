@@ -44,6 +44,24 @@ public interface UploadAuditRepository extends JpaRepository<UploadAudit, Long> 
 	List<UploadAudit> findStalePending(@Param("before") OffsetDateTime before, Pageable pageable);
 
 	/**
+	 * 목록에 내보낼 행. (GET /api/files)
+	 *
+	 * <p><b>{@code deletedAt IS NULL} 을 조회 조건에 넣는다.</b> {@code result} 를 조건에 넣는
+	 * 것과 같은 이유다 — 읽어와서 걸러내면 그 분기를 지워도 대개 티가 나지 않는다.
+	 * 조건이 쿼리에 있으면 지운 파일은 <b>애초에 손에 들어오지 않는다.</b>
+	 *
+	 * <p>{@code ORDER BY occurred_at DESC} 는 부분 인덱스 {@code idx_upload_audit_visible} 와
+	 * 같은 모양이다. 조건과 정렬이 인덱스와 어긋나면 목록 조회가 매번 전체를 훑는다.
+	 *
+	 * @param pageable 상한. {@code LIMIT} 을 쿼리 레벨에서 강제한다 — 전부 읽어온 뒤 잘라내면
+	 *                 행이 쌓일수록 조회 비용이 그대로 늘어난다
+	 */
+	@Query("SELECT a FROM UploadAudit a "
+		+ "WHERE a.result = flow.test.serverdev.audit.UploadResult.ALLOWED "
+		+ "AND a.deletedAt IS NULL ORDER BY a.occurredAt DESC")
+	List<UploadAudit> findVisible(Pageable pageable);
+
+	/**
 	 * 다운로드가 내보낼 행. (SPEC §7.6)
 	 *
 	 * <p><b>{@code result} 를 조회 조건에 넣는다.</b> 행을 읽어와서 상태를 보고 거르면 그
