@@ -7,6 +7,7 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import flow.test.serverdev.support.TestImages;
 
 /**
  * 애플리케이션 컨텍스트가 실제 스키마 위에서 기동하는지 검증한다.
@@ -39,7 +40,7 @@ class ExtensionApplicationTests {
 	 */
 	@Container
 	@ServiceConnection
-	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:18-alpine");
+	static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(TestImages.POSTGRES);
 
 	@Test
 	@DisplayName("실제 스키마 위에서 기동한다")
