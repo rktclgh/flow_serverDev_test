@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { AdminToken } from './components/AdminToken'
 import { PolicyPanel } from './components/PolicyPanel'
+import { ToastHost } from './components/ToastHost'
 import { UploadPanel } from './components/UploadPanel'
 import type { PolicyResponse } from './api/types'
 import './App.css'
@@ -21,6 +22,8 @@ export default function App() {
         <PolicyPanel onPolicyChange={onPolicyChange} />
         <UploadPanel policy={policy} />
       </main>
+
+      <ToastHost />
     </div>
   )
 }
