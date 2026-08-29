@@ -52,9 +52,11 @@ class PendingUploadSweeperScheduleTest extends IntegrationTest {
 		jdbc.update("DELETE FROM upload_audit");
 		String storedKey = "2026/08/30/" + UUID.randomUUID();
 		long id = jdbc.queryForObject(
-			"INSERT INTO upload_audit (occurred_at, original_filename, size_bytes, result, stored_key) "
-				+ "VALUES (?, 'scheduled.pdf', 10, 'PENDING', ?) RETURNING id",
-			Long.class, OffsetDateTime.now().minusMinutes(1), storedKey);
+			"INSERT INTO upload_audit "
+				+ "(occurred_at, original_filename, size_bytes, result, stored_key, file_id) "
+				+ "VALUES (?, 'scheduled.pdf', 10, 'PENDING', ?, ?::uuid) RETURNING id",
+			Long.class, OffsetDateTime.now().minusMinutes(1), storedKey,
+			storedKey.substring(storedKey.lastIndexOf('/') + 1));
 
 		String result = awaitConfirmation(id);
 
