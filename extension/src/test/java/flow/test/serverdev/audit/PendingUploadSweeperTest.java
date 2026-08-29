@@ -70,16 +70,26 @@ class PendingUploadSweeperTest extends IntegrationTest {
 
 	private long insertPending(OffsetDateTime occurredAt, String storedKey) {
 		return jdbc.queryForObject(
-			"INSERT INTO upload_audit (occurred_at, original_filename, size_bytes, result, stored_key) "
-				+ "VALUES (?, 'test.pdf', 10, 'PENDING', ?) RETURNING id",
-			Long.class, occurredAt, storedKey);
+			"INSERT INTO upload_audit "
+				+ "(occurred_at, original_filename, size_bytes, result, stored_key, file_id) "
+				+ "VALUES (?, 'test.pdf', 10, 'PENDING', ?, ?::uuid) RETURNING id",
+			Long.class, occurredAt, storedKey, fileIdOf(storedKey));
 	}
 
 	private long insertAllowed(OffsetDateTime occurredAt, String storedKey) {
 		return jdbc.queryForObject(
-			"INSERT INTO upload_audit (occurred_at, original_filename, size_bytes, result, stored_key) "
-				+ "VALUES (?, 'test.pdf', 10, 'ALLOWED', ?) RETURNING id",
-			Long.class, occurredAt, storedKey);
+			"INSERT INTO upload_audit "
+				+ "(occurred_at, original_filename, size_bytes, result, stored_key, file_id) "
+				+ "VALUES (?, 'test.pdf', 10, 'ALLOWED', ?, ?::uuid) RETURNING id",
+			Long.class, occurredAt, storedKey, fileIdOf(storedKey));
+	}
+
+	/**
+	 * 키 끝의 UUID 가 곧 그 파일의 식별자다. 무작위 값을 넣지 않고 키에서 꺼내
+	 * <b>운영에서 만들어지는 행과 같은 모양</b>으로 심는다.
+	 */
+	private static String fileIdOf(String storedKey) {
+		return storedKey.substring(storedKey.lastIndexOf('/') + 1);
 	}
 
 	private long insertBlocked(OffsetDateTime occurredAt) {

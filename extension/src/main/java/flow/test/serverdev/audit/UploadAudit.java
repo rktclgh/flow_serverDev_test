@@ -2,6 +2,9 @@ package flow.test.serverdev.audit;
 
 import java.net.InetAddress;
 import java.time.OffsetDateTime;
+import java.util.UUID;
+
+import flow.test.serverdev.storage.StorageKey;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -78,12 +81,22 @@ public class UploadAudit {
 	@Column(name = "stored_key", updatable = false)
 	private String storedKey;
 
+	/**
+	 * 클라이언트에 노출되는 식별자. 다운로드가 이 값으로 이 행을 찾는다(SPEC §7.6).
+	 *
+	 * <p><b>{@code storedKey} 에서 다시 파싱하지 않고 따로 들고 있는다.</b> 키에서 UUID 를
+	 * 잘라 조회하면 {@code stored_key LIKE '%/' || :uuid} 가 되어 인덱스를 타지 못하고,
+	 * 키의 형태(날짜 프리픽스)가 조회 조건이 되어버린다.
+	 */
+	@Column(name = "file_id", updatable = false)
+	private UUID fileId;
+
 	protected UploadAudit() {
 		// JPA
 	}
 
 	private UploadAudit(UploadAttempt attempt, UploadResult result, String reasonCode,
-			String storedKey) {
+			StorageKey key) {
 		this.originalFilename = attempt.originalFilename();
 		this.clientIp = attempt.clientIp();
 		this.sizeBytes = attempt.sizeBytes();
@@ -91,7 +104,8 @@ public class UploadAudit {
 		this.note = attempt.note();
 		this.result = result;
 		this.reasonCode = reasonCode;
-		this.storedKey = storedKey;
+		this.storedKey = key != null ? key.value() : null;
+		this.fileId = key != null ? key.fileId() : null;
 	}
 
 	/** 정책이 거부했다. 저장하지 않았으므로 키가 없다. */
@@ -105,13 +119,20 @@ public class UploadAudit {
 	 * <p>이 행이 커밋된 뒤에야 스토리지를 호출한다. 그래서 DB 장애로 이 커밋이 실패하면
 	 * 스토리지는 손도 대지 않은 상태이며, 정리할 찌꺼기가 없다.
 	 */
-	public static UploadAudit pending(UploadAttempt attempt, String storedKey) {
-		return new UploadAudit(attempt, UploadResult.PENDING, null, storedKey);
+	public static UploadAudit pending(UploadAttempt attempt, StorageKey key) {
+		return new UploadAudit(attempt, UploadResult.PENDING, null, key);
 	}
 
-	/** 저장을 시도하기도 전에 실패했다. 키는 있을 수도 없을 수도 있다. */
-	public static UploadAudit error(UploadAttempt attempt, String reasonCode, String storedKey) {
-		return new UploadAudit(attempt, UploadResult.ERROR, reasonCode, storedKey);
+	/**
+	 * 저장을 <b>시도하기도 전에</b> 실패했다. 그래서 키가 없다.
+	 *
+	 * <p>키를 인자로 받지 않는다. 키가 정해진 뒤의 실패는 이 경로가 아니라
+	 * {@code PENDING → ERROR} 전이({@link #markError})로 기록되며, 그때 키와 식별자는
+	 * 이미 행에 적혀 있다. 키를 받을 수 있게 열어두면 "키는 있는데 식별자는 없는" 행을
+	 * 만들 수 있게 되는데, DB 가 바로 그것을 거부한다({@code ck_upload_audit_stored_key_file_id}).
+	 */
+	public static UploadAudit error(UploadAttempt attempt, String reasonCode) {
+		return new UploadAudit(attempt, UploadResult.ERROR, reasonCode, null);
 	}
 
 	/**
@@ -187,5 +208,9 @@ public class UploadAudit {
 
 	public String storedKey() {
 		return storedKey;
+	}
+
+	public UUID fileId() {
+		return fileId;
 	}
 }
