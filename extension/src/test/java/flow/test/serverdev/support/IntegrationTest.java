@@ -22,7 +22,14 @@ import io.minio.MinioClient;
  * 프로퍼티는 여기서만 지정하고 하위 클래스는 추가하지 않는다.
  */
 @SpringBootTest
-@TestPropertySource(properties = "app.admin-token=" + IntegrationTest.ADMIN_TOKEN)
+@TestPropertySource(properties = {
+	"app.admin-token=" + IntegrationTest.ADMIN_TOKEN,
+	// 속도 제한은 켜 두되 사실상 걸리지 않게 한다. 필터를 끄면 나머지 테스트가 필터 없는
+	// 경로를 검증하게 되어 배포와 달라지고, 운영 기본값(burst 10)을 그대로 쓰면 업로드
+	// 테스트들이 한 버킷을 나눠 쓰면서 실패가 실행 순서에 좌우된다.
+	// 실제 한도 동작은 RateLimitFilterTest·RateLimitFilterWiringTest 가 본다.
+	"app.rate-limit.burst=100000"
+})
 public abstract class IntegrationTest {
 
 	/** 32자 이상 — 운영에서 요구하는 길이를 테스트에서도 지킨다. */

@@ -83,7 +83,7 @@ public class UploadService {
 			accepted.extension().orElse(null), note(accepted.middleSegments()));
 
 		// ① 자리를 먼저 잡는다. 여기서 실패하면 스토리지는 손도 대지 않은 상태다.
-		long auditId = audit.beginPending(attempt, key.value());
+		long auditId = audit.beginPending(attempt, key);
 
 		try {
 			storage.store(key, content, size);
