@@ -14,6 +14,9 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
+import flow.test.serverdev.storage.StorageException;
+import flow.test.serverdev.storage.StorageOutcomeUnknownException;
+
 /**
  * 예외를 {@link ApiErrorResponse} 로 변환하는 단일 지점.
  *
@@ -44,6 +47,24 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 	private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
 	/** 애플리케이션이 스스로 내린 판정. 사용자에게 그대로 설명할 수 있는 실패다. */
+	/**
+	 * 결과를 알 수 없는 저장 실패. <b>{@link StorageException} 보다 먼저</b> 선언돼 있어야 하는 것이
+	 * 아니라, 스프링이 가장 구체적인 핸들러를 고르므로 하위 타입인 이것이 선택된다.
+	 */
+	@ExceptionHandler(StorageOutcomeUnknownException.class)
+	ResponseEntity<ApiErrorResponse> handleStorageUnknown(StorageOutcomeUnknownException exception) {
+		log.warn("저장 결과 불명", exception);
+		return ResponseEntity.status(ErrorCode.UPLOAD_OUTCOME_UNKNOWN.status())
+			.body(ApiErrorResponse.of(ErrorCode.UPLOAD_OUTCOME_UNKNOWN, "저장됐는지 확인할 수 없습니다."));
+	}
+
+	@ExceptionHandler(StorageException.class)
+	ResponseEntity<ApiErrorResponse> handleStorage(StorageException exception) {
+		log.error("스토리지 실패", exception);
+		return ResponseEntity.status(ErrorCode.STORAGE_UNAVAILABLE.status())
+			.body(ApiErrorResponse.of(ErrorCode.STORAGE_UNAVAILABLE, "저장소에 연결하지 못했습니다."));
+	}
+
 	@ExceptionHandler(PolicyException.class)
 	ResponseEntity<ApiErrorResponse> handlePolicy(PolicyException exception) {
 		return ResponseEntity.status(exception.errorCode().status())

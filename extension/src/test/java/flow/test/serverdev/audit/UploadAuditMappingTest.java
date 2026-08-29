@@ -122,15 +122,41 @@ class UploadAuditMappingTest extends IntegrationTest {
 
 		/** 확정된 기록은 도메인에서 먼저 막는다. DB 트리거는 그 뒤의 방어선이다. */
 		@Test
-		@DisplayName("확정된 기록은 다시 전이시킬 수 없다")
+		@DisplayName("확정된 기록은 다른 상태로 전이시킬 수 없다")
 		void finalStateIsFinal() {
 			UploadAudit saved = repository.saveAndFlush(
 				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k3"));
 			saved.markAllowed();
 
-			assertThatThrownBy(saved::markAllowed).isInstanceOf(IllegalStateException.class);
 			assertThatThrownBy(() -> saved.markError("STORAGE_UNAVAILABLE"))
 				.isInstanceOf(IllegalStateException.class);
+		}
+
+		/**
+		 * ★ 같은 상태로의 재확정만 예외다. 커밋이 실패했는지 응답만 못 받았는지 호출자는
+		 * 구분하지 못하므로(SPEC §21.6), 두 번째 {@code markAllowed} 에서 예외가 나면
+		 * <b>실제로 성공한 업로드를 실패로 보고</b>하게 된다. 되돌리기가 아니라 재시도다.
+		 */
+		@Test
+		@DisplayName("ALLOWED 를 다시 ALLOWED 로 두는 것은 허용한다 — 되돌리기가 아니라 재시도다")
+		void reconfirmingAllowedIsNoOp() {
+			UploadAudit saved = repository.saveAndFlush(
+				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k4"));
+			saved.markAllowed();
+
+			saved.markAllowed();
+
+			assertThat(saved.result()).isEqualTo(UploadResult.ALLOWED);
+		}
+
+		@Test
+		@DisplayName("ERROR 를 ALLOWED 로 되돌릴 수는 없다")
+		void errorCannotBecomeAllowed() {
+			UploadAudit saved = repository.saveAndFlush(
+				UploadAudit.pending(attempt("a.pdf", null), "2026/08/29/k5"));
+			saved.markError("STORAGE_UNAVAILABLE");
+
+			assertThatThrownBy(saved::markAllowed).isInstanceOf(IllegalStateException.class);
 		}
 	}
 
