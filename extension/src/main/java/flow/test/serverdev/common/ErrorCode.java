@@ -87,6 +87,17 @@ public enum ErrorCode {
 	 */
 	FILE_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE),
 
+	/**
+	 * 요청이 너무 잦다. (SPEC §10.4)
+	 *
+	 * <p>{@code Retry-After} 헤더를 함께 보낸다 — 언제 다시 오면 되는지는 서버만 안다.
+	 * 화면은 이것을 <b>실패로 표시하지 않고</b> 그만큼 기다렸다 자동 재시도한다(SPEC §19).
+	 *
+	 * <p>이 판정은 <b>감사하지 않는다</b>(SPEC §21.2). 정책 판정에 도달하지 않아 기록할 내용이
+	 * 없고, 기록하면 요청만으로 감사 테이블을 부풀릴 수 있다.
+	 */
+	RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS),
+
 	/** 스토리지가 저장을 거부했다. 객체가 없는 것이 확실하므로 다시 시도하면 된다. */
 	STORAGE_UNAVAILABLE(HttpStatus.SERVICE_UNAVAILABLE),
 
