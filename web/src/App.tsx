@@ -22,7 +22,7 @@ export default function App() {
   return (
     <div className="app">
       <header>
-        <h1>ExtGuard</h1>
+        <h1>UploadGuard</h1>
         <p className="muted">차단할 확장자를 정하고, 그 정책으로 파일 업로드를 막습니다.</p>
         <AdminToken onSaved={(token) => setHasAdminToken(token.length > 0)} />
       </header>
