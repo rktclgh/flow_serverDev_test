@@ -10,3 +10,6 @@
 
 # 내부 설계 문서 — 제출 시점에 CONSIDERATIONS.md 로 정제할 예정
 SPEC.md
+
+# jqwik 이 실패 케이스를 재현하려고 남기는 로컬 캐시
+.jqwik-database
