@@ -2,9 +2,12 @@ package flow.test.serverdev.audit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -141,8 +144,8 @@ class PendingUploadSweeperTest extends IntegrationTest {
 		}
 
 		@Test
-		@DisplayName("객체 삭제가 실패하면 행은 PENDING 으로 남는다")
-		void keepsRowPendingWhenDeleteFails() {
+		@DisplayName("객체 삭제가 실패해도 행은 확정된 채 남고 stored_key 로 추적할 수 있다")
+		void keepsRowConfirmedWhenDeleteFails() {
 			String staleKey = key();
 			long id = insertPending(stale(), staleKey);
 			storage.failOn(staleKey);
@@ -150,8 +153,12 @@ class PendingUploadSweeperTest extends IntegrationTest {
 			sweeper(100).sweep();
 
 			UploadAudit audit = repository.findById(id).orElseThrow();
-			assertThat(audit.result()).isEqualTo(UploadResult.PENDING);
-			assertThat(audit.reasonCode()).isNull();
+			assertThat(audit.result())
+				.as("소유권을 먼저 얻으므로 확정이 삭제보다 앞선다")
+				.isEqualTo(UploadResult.ERROR);
+			assertThat(audit.storedKey())
+				.as("고아 객체가 남았다. 이 키가 없으면 무엇이 남았는지 알 수 없다")
+				.isEqualTo(staleKey);
 		}
 
 		@Test
@@ -166,7 +173,7 @@ class PendingUploadSweeperTest extends IntegrationTest {
 			sweeper(100).sweep();
 
 			assertThat(repository.findById(failingId).orElseThrow().result())
-				.isEqualTo(UploadResult.PENDING);
+				.isEqualTo(UploadResult.ERROR);
 			assertThat(repository.findById(okId).orElseThrow().result())
 				.isEqualTo(UploadResult.ERROR);
 			assertThat(storage.deletedKeys()).containsExactly(okKey);
@@ -204,6 +211,111 @@ class PendingUploadSweeperTest extends IntegrationTest {
 			assertThat(nowError).isEqualTo(2);
 			assertThat(stillPending).isEqualTo(1);
 			assertThat(storage.deletedKeys()).hasSize(2);
+		}
+	}
+
+	@Nested
+	@DisplayName("★ 청소 소유권 — 조회와 삭제 사이에 업로드가 끝날 수 있다 (SPEC §21.6)")
+	class Ownership {
+
+		@Test
+		@DisplayName("그 사이 ALLOWED 로 확정되면 객체를 지우지 않는다")
+		void doesNotDeleteWhenLostRace() {
+			String staleKey = key();
+			long id = insertPending(stale(), staleKey);
+
+			racingSweeper(id).sweep();
+
+			assertThat(storage.deletedKeys())
+				.as("ALLOWED 행이 가리키는 객체를 지우면 아무도 눈치채지 못한다")
+				.isEmpty();
+			UploadAudit audit = repository.findById(id).orElseThrow();
+			assertThat(audit.result()).isEqualTo(UploadResult.ALLOWED);
+			assertThat(audit.reasonCode()).isNull();
+		}
+
+		@Test
+		@DisplayName("소유권을 얻은 행은 그대로 정리된다 — 경합이 없으면 동작이 같다")
+		void stillSweepsWhenRaceIsWon() {
+			String staleKey = key();
+			long other = insertPending(stale(), key());
+			long id = insertPending(stale(), staleKey);
+
+			// 다른 행만 확정시킨다. 이 행은 끝까지 PENDING 이라 소유권을 얻는다.
+			racingSweeper(other).sweep();
+
+			assertThat(storage.deletedKeys()).containsExactly(staleKey);
+			assertThat(repository.findById(id).orElseThrow().result()).isEqualTo(UploadResult.ERROR);
+		}
+
+		@Test
+		@DisplayName("소유권 획득이 터져도 나머지 행은 계속 처리된다 — 행은 PENDING 으로 남아 다음 주기가 집는다")
+		void continuesWhenClaimThrows() {
+			String brokenKey = key();
+			String okKey = key();
+			long brokenId = insertPending(stale(), brokenKey);
+			long okId = insertPending(stale(), okKey);
+
+			sweeperWithFailingClaim(brokenId).sweep();
+
+			assertThat(repository.findById(brokenId).orElseThrow().result())
+				.as("소유권을 못 얻었으면 객체도 행도 그대로여야 한다")
+				.isEqualTo(UploadResult.PENDING);
+			assertThat(repository.findById(okId).orElseThrow().result())
+				.isEqualTo(UploadResult.ERROR);
+			assertThat(storage.deletedKeys()).containsExactly(okKey);
+		}
+
+		/** 한 행의 소유권 획득만 터뜨린다. 나머지 호출은 실제 리포지토리로 간다. */
+		private PendingUploadSweeper sweeperWithFailingClaim(long failingId) {
+			return sweeperWith((method, args) -> {
+				if ("claimAbandoned".equals(method.getName()) && failingId == (long) args[0]) {
+					throw new IllegalStateException("테스트 강제 실패: claimAbandoned id=" + failingId);
+				}
+			});
+		}
+
+		/**
+		 * 조회와 소유권 획득 <b>사이</b>에 {@code markAllowed} 가 끼어드는 상황을 재현한다.
+		 *
+		 * <p>협력자를 가짜로 바꾸는 것이 아니라 <b>모든 호출을 실제 리포지토리에 그대로
+		 * 넘긴다.</b> 하는 일은 {@code findStalePending} 이 돌아온 직후에 다른 트랜잭션이
+		 * 했을 UPDATE 를 한 번 끼워 넣는 것뿐이다. 조건부 UPDATE 의 판정은 여전히 실제
+		 * Postgres 가 한다 — 검증 대상이 바로 그 판정이므로 그것을 흉내 내면 의미가 없다.
+		 *
+		 * <p>스레드를 띄워 진짜 동시성으로 재현하지 않는 이유는 <b>간헐적으로만 겹치기
+		 * 때문</b>이다. 회귀를 잡아야 하는 테스트가 확률적으로 통과하면 방어가 아니다.
+		 */
+		private PendingUploadSweeper racingSweeper(long idToConfirm) {
+			return sweeperWith((method, args) -> {
+				if ("findStalePending".equals(method.getName())) {
+					// 조회가 끝난 직후, 소유권 획득 전. 다른 트랜잭션이 markAllowed 를 커밋한 시점이다.
+					jdbc.update("UPDATE upload_audit SET result = 'ALLOWED' WHERE id = ?", idToConfirm);
+				}
+			});
+		}
+
+		/**
+		 * 실제 리포지토리를 그대로 쓰되 호출 사이에 사건을 하나 끼워 넣는 스위퍼.
+		 *
+		 * @param interceptor 실제 호출 <b>전에</b> 돈다. 예외를 던지면 그 호출이 실패한 것이
+		 *                    되고, 그냥 돌아오면 실제 호출이 이어진다
+		 */
+		private PendingUploadSweeper sweeperWith(BiConsumer<Method, Object[]> interceptor) {
+			UploadAuditRepository seam = (UploadAuditRepository) Proxy.newProxyInstance(
+				UploadAuditRepository.class.getClassLoader(),
+				new Class<?>[] { UploadAuditRepository.class },
+				(proxy, method, args) -> {
+					if ("findStalePending".equals(method.getName())) {
+						Object found = method.invoke(repository, args);
+						interceptor.accept(method, args);
+						return found;
+					}
+					interceptor.accept(method, args);
+					return method.invoke(repository, args);
+				});
+			return new PendingUploadSweeper(seam, storage,
+				new PendingUploadSweeperProperties(true, Duration.ofMinutes(5), THRESHOLD, 100));
 		}
 	}
 }
