@@ -19,22 +19,28 @@ import flow.test.serverdev.policy.NormalizeResult;
  *
  * <p><b>차단 판정은 마지막 확장자만으로 한다.</b> Windows 확장자 숨김은 마지막 확장자만
  * 숨기므로 위험한 쪽은 {@code file.txt.exe} 이고, 그것은 마지막만 봐도 잡힌다.
- * 중간 확장자가 실제 위협이 되는 경우({@code shell.php.jpg} 가 PHP 로 실행)는
- * 웹서버가 다중 확장자를 핸들러로 매칭할 때인데, 저장 키가 UUID 라 그 경로가 존재하지 않는다.
- * 중간 세그먼트는 수집하되 <b>차단하지 않고 감사 로그에만</b> 남긴다.
+ * {@code invoice.exe.pdf} 는 실제로 PDF 이며 PDF 뷰어로 열린다 — 차단하면 오탐이다.
+ * 중간 세그먼트는 수집하되 차단하지 않고 감사 로그에만 남긴다.
  */
 @Component
 public class FilenameAnalyzer {
 
+	/**
+	 * 정규화 이전 원시 입력 상한. 파일명은 공격자가 통제하는 입력이므로
+	 * NFKC 할당·코드포인트 순회 같은 비용을 치르기 <b>전에</b> 먼저 끊는다.
+	 * 정상 파일명은 255 이하이며, multipart 헤더 현실을 감안해 넉넉히 잡았다.
+	 */
+	private static final int MAX_RAW_LENGTH = 4096;
+
 	/** 대부분 파일시스템의 NAME_MAX. Content-Disposition 헤더 길이 폭증도 함께 막는다. */
-	private static final int MAX_FILENAME_LENGTH = 255;
+	private static final int MAX_BASENAME_LENGTH = 255;
 
 	/**
-	 * 양방향 제어문자. 화면 표시와 실제 바이트가 달라지므로 파일명에 허용하지 않는다.
-	 * LRM/RLM, LRE/RLE/PDF/LRO/RLO, LRI/RLI/FSI/PDI.
+	 * 양방향 제어문자. 모두 Cf 이지만 "시각적 위장" 이라는 공격 성격이 뚜렷해
+	 * 다른 제어문자와 구분해 기록한다. ALM(U+061C)을 포함한다.
 	 */
 	private static final Set<Integer> BIDI_CONTROLS = Set.of(
-		0x200E, 0x200F,
+		0x061C, 0x200E, 0x200F,
 		0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
 		0x2066, 0x2067, 0x2068, 0x2069);
 
@@ -50,7 +56,13 @@ public class FilenameAnalyzer {
 			return reject(FilenameRejectReason.EMPTY);
 		}
 
-		// 2. 유니코드 정규화. 전각 마침표(U+FF0E)가 여기서 ASCII 점이 되어 7번 처리 대상이 된다.
+		// 2. 원시 상한을 정규화 전에 적용한다.
+		//    이 검사가 뒤에 있으면 공격자가 보낸 거대한 문자열을 전부 정규화·순회한 뒤에야 거부한다.
+		if (rawFilename.length() > MAX_RAW_LENGTH) {
+			return reject(FilenameRejectReason.TOO_LONG);
+		}
+
+		// 3. 유니코드 정규화. 전각 마침표(U+FF0E)가 여기서 ASCII 점이 되어 후행 정리 대상이 된다.
 		String name = Normalizer.normalize(rawFilename, Normalizer.Form.NFKC);
 
 		// NBSP 만 있는 파일명은 1번을 통과한다(isWhitespace 가 false). NFKC 후 다시 확인한다.
@@ -58,20 +70,26 @@ public class FilenameAnalyzer {
 			return reject(FilenameRejectReason.EMPTY);
 		}
 
-		// 3. 널바이트는 절단하지 않고 거부한다.
-		//    "safe.jpg\0.exe" 를 절단하면 공격자 의도대로 safe.jpg 로 처리하는 셈이 된다.
+		// 4. 널바이트는 절단하지 않고 거부한다.
+		//    "safe.jpg"+NUL+".exe" 를 절단하면 공격자 의도대로 safe.jpg 로 처리하는 셈이다.
 		if (name.indexOf(0) >= 0) {
 			return reject(FilenameRejectReason.NULL_BYTE);
 		}
 
-		// 4. 양방향 제어문자. photo + U+202E + "gnp.exe" 는 화면에 photoexe.png 로 보인다.
+		// 5. 제어문자(Cc)와 서식문자(Cf)를 거부한다.
+		//    개별 코드포인트를 나열하지 않고 유니코드 카테고리로 판정하는 이유는
+		//    ALM(U+061C)·BOM(U+FEFF) 처럼 목록에서 빠지기 쉬운 문자를 원천 차단하기 위함이다.
+		//    공백류(Zs)는 해당하지 않으므로 "archive.tar.gz backup" 같은 정상 파일명은 유지된다.
+		//
+		//    막는 공격이 둘이다.
+		//    - CR/LF: 원본 파일명이 Content-Disposition 헤더나 로그로 흘러갈 때의 주입 경계
+		//    - ZWSP 등 보이지 않는 문자: "invoice.exe"+ZWSP 로 확장자 정규화를 실패시켜
+		//      "확장자 없음" 으로 빠져나가는 우회
 		if (name.codePoints().anyMatch(BIDI_CONTROLS::contains)) {
 			return reject(FilenameRejectReason.BIDI_CONTROL);
 		}
-
-		// 5. 길이. 코드포인트 기준 — NFKC 가 길이를 늘릴 수 있으므로 정규화 이후에 센다.
-		if (name.codePointCount(0, name.length()) > MAX_FILENAME_LENGTH) {
-			return reject(FilenameRejectReason.TOO_LONG);
+		if (name.codePoints().anyMatch(FilenameAnalyzer::isControlOrFormat)) {
+			return reject(FilenameRejectReason.CONTROL_CHARACTER);
 		}
 
 		// 6. 경로 구분자 제거. 브라우저는 basename 만 보내지만 curl 은 임의 값을 보낼 수 있다.
@@ -86,8 +104,20 @@ public class FilenameAnalyzer {
 			return reject(FilenameRejectReason.EMPTY);
 		}
 
-		// 8~9. 마지막 확장자와 중간 세그먼트 분리
+		// 8. 길이 상한은 <b>basename 기준</b>으로 판정한다.
+		//    일부 브라우저는 "C:\fakepath\" 를 앞에 붙여 보내는데, 전체 길이로 재면
+		//    basename 이 255 이하인 정상 파일이 거부된다.
+		if (base.codePointCount(0, base.length()) > MAX_BASENAME_LENGTH) {
+			return reject(FilenameRejectReason.TOO_LONG);
+		}
+
+		// 9. 마지막 확장자와 중간 세그먼트 분리
 		return new FilenameAnalysis.Ok(base, lastExtensionOf(base), middleSegmentsOf(base));
+	}
+
+	private static boolean isControlOrFormat(int codePoint) {
+		int type = Character.getType(codePoint);
+		return type == Character.CONTROL || type == Character.FORMAT;
 	}
 
 	private static String basename(String name) {
