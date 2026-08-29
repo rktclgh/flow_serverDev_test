@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.time.OffsetDateTime;
+import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -15,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import flow.test.serverdev.storage.StorageKey;
 import flow.test.serverdev.support.IntegrationTest;
 
 /**
@@ -75,7 +77,7 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		@DisplayName("호출자 트랜잭션이 롤백돼도 PENDING 자리는 남는다")
 		void pendingSurvives() {
 			transactionTemplate.execute(status -> {
-				recorder.beginPending(attempt("a.pdf"), "2026/08/29/key");
+				recorder.beginPending(attempt("a.pdf"), key("2026/08/29/key"));
 				status.setRollbackOnly();
 				return null;
 			});
@@ -92,7 +94,7 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		@Test
 		@DisplayName("자리를 잡고 성공으로 확정한다")
 		void beginThenAllow() {
-			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/k1");
+			long id = recorder.beginPending(attempt("a.pdf"), key("2026/08/29/k1"));
 
 			assertThat(repository.findById(id).orElseThrow().result())
 				.isEqualTo(UploadResult.PENDING);
@@ -103,10 +105,27 @@ class UploadAuditRecorderTest extends IntegrationTest {
 				.isEqualTo(UploadResult.ALLOWED);
 		}
 
+		/**
+		 * ★ 키와 식별자를 <b>한 번에</b> 적는다(SPEC §21.8). 식별자를 적지 않으면 201 의
+		 * {@code fileId} 도 다운로드 조회도 성립하지 않고, 그 사실은 다운로드를 만들 때가
+		 * 되어서야 드러난다.
+		 */
+		@Test
+		@DisplayName("자리를 잡을 때 저장 키와 파일 식별자를 함께 적는다")
+		void beginPendingWritesFileId() {
+			StorageKey key = key("2026/08/29/k0");
+
+			long id = recorder.beginPending(attempt("a.pdf"), key);
+
+			UploadAudit audit = repository.findById(id).orElseThrow();
+			assertThat(audit.storedKey()).isEqualTo(key.value());
+			assertThat(audit.fileId()).isEqualTo(key.fileId());
+		}
+
 		@Test
 		@DisplayName("자리를 잡고 실패로 확정한다")
 		void beginThenError() {
-			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/k2");
+			long id = recorder.beginPending(attempt("a.pdf"), key("2026/08/29/k2"));
 
 			recorder.markError(id, "STORAGE_UNAVAILABLE");
 
@@ -119,7 +138,7 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		@Test
 		@DisplayName("같은 상태로의 재확정은 조용히 통과한다 — 재시도가 실패로 보고되면 안 된다")
 		void confirmingTwiceIsIdempotent() {
-			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/k3");
+			long id = recorder.beginPending(attempt("a.pdf"), key("2026/08/29/k3"));
 			recorder.markAllowed(id);
 
 			recorder.markAllowed(id);
@@ -132,7 +151,7 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		@Test
 		@DisplayName("확정된 기록을 다른 상태로 바꿀 수는 없다")
 		void cannotChangeToAnotherState() {
-			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/k3b");
+			long id = recorder.beginPending(attempt("a.pdf"), key("2026/08/29/k3b"));
 			recorder.markAllowed(id);
 
 			assertThatThrownBy(() -> recorder.markError(id, "STORAGE_UNAVAILABLE"))
@@ -153,8 +172,8 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		@Test
 		@DisplayName("확정되지 못한 기록은 조회로 찾을 수 있다")
 		void stalePendingIsDiscoverable() {
-			recorder.beginPending(attempt("stale.pdf"), "2026/08/29/k4");
-			long confirmed = recorder.beginPending(attempt("ok.pdf"), "2026/08/29/k5");
+			recorder.beginPending(attempt("stale.pdf"), key("2026/08/29/k4"));
+			long confirmed = recorder.beginPending(attempt("ok.pdf"), key("2026/08/29/k5"));
 			recorder.markAllowed(confirmed);
 
 			assertThat(repository.findStalePending(OffsetDateTime.now().plusMinutes(1)))
@@ -195,6 +214,14 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		return new UploadAttempt(filename, null, 1024L, null, null);
 	}
 
+	/**
+	 * 기록기는 키와 식별자를 <b>함께</b> 받는다(SPEC §21.8). 둘을 따로 넘기는 형태였다면
+	 * 서로 다른 업로드의 값을 섞어 넣을 수 있다.
+	 */
+	private static StorageKey key(String value) {
+		return new StorageKey(UUID.randomUUID(), value);
+	}
+
 	@Nested
 	@DisplayName("청소 소유권 (claimAbandoned)")
 	class ClaimAbandoned {
@@ -213,7 +240,7 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		@Test
 		@DisplayName("ALLOWED 로 확정된 행은 예외가 아니라 0을 돌려준다")
 		void allowedRowIsNotClaimed() {
-			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/claim1");
+			long id = recorder.beginPending(attempt("a.pdf"), key("2026/08/29/claim1"));
 			recorder.markAllowed(id);
 
 			assertThat(repository.claimAbandoned(id, "UPLOAD_ABANDONED")).isZero();
@@ -222,7 +249,7 @@ class UploadAuditRecorderTest extends IntegrationTest {
 		@Test
 		@DisplayName("PENDING 행은 1을 돌려주고 ERROR 로 확정된다")
 		void pendingRowIsClaimed() {
-			long id = recorder.beginPending(attempt("a.pdf"), "2026/08/29/claim2");
+			long id = recorder.beginPending(attempt("a.pdf"), key("2026/08/29/claim2"));
 
 			assertThat(repository.claimAbandoned(id, "UPLOAD_ABANDONED")).isEqualTo(1);
 			assertThat(jdbc.queryForObject(
