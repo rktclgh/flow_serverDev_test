@@ -1,8 +1,8 @@
 # 로컬/제출용 self-contained 구성.
 #   docker compose up --build   →  http://localhost:${APP_PORT:-8080}
 #
-# 서버 배포는 docker-compose.prod.yml 을 쓴다 (기존 Postgres·MinIO 인스턴스에 연결).
-# 로컬 포트는 흔한 충돌(5432, 9000)을 피해 잡아두었다.
+# 이 한 파일로 앱·DB·오브젝트 스토리지가 모두 뜬다. 외부에 준비해 둘 것이 없다.
+# 로컬 포트는 흔한 충돌(5432, 9000)을 피해 잡아두었다. 겹치면 .env 로 바꾼다.
 
 services:
   db:
