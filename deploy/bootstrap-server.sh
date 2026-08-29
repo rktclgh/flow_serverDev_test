@@ -13,6 +13,10 @@
 # 기존 볼륨에 붙지 못한다.
 set -euo pipefail
 
+# 어디서 실행하든 저장소 루트를 기준으로 삼는다. deploy/ 안에서 실행하면
+# deploy/deploy/... 를 찾다 실패한다. deploy.sh 에는 있는데 여기만 빠져 있었다.
+cd "$(dirname "$0")/.."
+
 SSH_HOST="${SSH_HOST:-linux}"
 REMOTE_DIR="${REMOTE_DIR:-/home/song/extguard}"
 
