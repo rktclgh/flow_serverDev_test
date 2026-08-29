@@ -39,7 +39,21 @@ export interface QueueItem {
 interface QueueState {
   items: QueueItem[]
   running: boolean
-  /** 이번 묶음에서 처리를 마친 개수 / 받아들인 개수. 끝난 항목이 사라져도 진척은 보여야 한다. */
+  /**
+   * 이번 묶음의 진척. 끝난 항목이 목록에서 사라져도 진척은 보여야 한다.
+   *
+   * ★ 두 값의 뜻을 못 박아 둔다. 안 그러면 끝나도 `4/5` 에 멈춰 사용자가 뭔가 안 끝났다고 읽는다.
+   *
+   * - `total`    = **시도 대상으로 받아들인 것.** 시도하기 전에 큐에서 빼면 애초에 없던 일이므로
+   *                `remove` 가 이 값도 함께 줄인다.
+   * - `processed` = **결과를 알린 것.** 성공·거부·실패·취소 모두 결과이고 토스트로 한 번 알렸다.
+   *
+   * 취소도 `processed` 로 센다. 사용자가 의도한 것이라 실패는 아니지만(토스트도 info 다),
+   * 요청은 이미 나갔고 결과를 알렸다 — `total` 이 이미 시도 대상으로 세어 둔 항목이므로
+   * 여기서 빼면 도리어 짝이 안 맞는다. 대기 중 제거는 요청이 나가기 전이라 경우가 다르다.
+   *
+   * 불변식: 묶음이 끝나면 `processed === total`, 그리고 `processed` 는 띄운 결과 토스트 수와 같다.
+   */
   processed: number
   total: number
   /**
@@ -123,10 +137,21 @@ export const useUploadQueue = create<QueueState>((set, get) => ({
     void get().run()
   },
 
+  /**
+   * 대기 중인 항목을 큐에서 뺀다.
+   *
+   * `QUEUED` 만 뺄 수 있다. `UPLOADING` 과 `RETRYING` 은 실행기가 들고 있어서, 목록에서만
+   * 지우면 실행기가 그대로 올린 뒤 `processed` 를 올려 `processed > total` 이 된다.
+   * (진행 중인 것은 `cancel` 이, 재시도 대기는 그 다음 시도가 결론을 낸다.)
+   */
   remove: (id) => {
     const item = get().items.find((candidate) => candidate.id === id)
-    if (item && item.status === 'UPLOADING') return
-    set({ items: get().items.filter((candidate) => candidate.id !== id) })
+    if (!item || item.status !== 'QUEUED') return
+    set({
+      items: get().items.filter((candidate) => candidate.id !== id),
+      // 시도조차 하지 않은 것은 "받아들인 것" 에서도 뺀다. 안 그러면 끝나도 4/5 로 멈춘다.
+      total: Math.max(get().total - 1, get().processed),
+    })
   },
 
   cancel: (id) => {
@@ -170,6 +195,10 @@ export const useUploadQueue = create<QueueState>((set, get) => ({
 
           const since = Date.now() - lastRequestAt
           if (since < MIN_INTERVAL_MS) await sleep(MIN_INTERVAL_MS - since)
+
+          // pacing 대기(최대 1초)는 사용자가 × 를 누르기 충분한 시간이다. 그 사이에 빠진
+          // 항목을 그대로 올리면 이미 total 에서 빠진 것을 processed 로 세게 된다.
+          if (!get().items.some((item) => item.id === next.id)) break
 
           patch(next.id, { status: 'UPLOADING', message: '올리는 중', attempts: attempt })
 
