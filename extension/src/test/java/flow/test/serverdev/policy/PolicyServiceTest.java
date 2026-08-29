@@ -16,6 +16,7 @@ import flow.test.serverdev.common.ErrorCode;
 import flow.test.serverdev.common.PolicyException;
 import flow.test.serverdev.policy.dto.PolicyResponse;
 import flow.test.serverdev.support.IntegrationTest;
+import flow.test.serverdev.support.PolicyFixture;
 
 /**
  * 정책 서비스의 도메인 규칙 검증. (SPEC §7.1~7.4, §8.1)
@@ -34,11 +35,9 @@ class PolicyServiceTest extends IntegrationTest {
 	@Autowired
 	JdbcTemplate jdbc;
 
-	/** 커스텀은 비우고 고정은 전부 미차단으로 되돌린다. 고정 7행은 트리거가 삭제를 막는다. */
 	@BeforeEach
 	void reset() {
-		jdbc.update("DELETE FROM blocked_extension WHERE type = 'CUSTOM'");
-		jdbc.update("UPDATE blocked_extension SET is_blocked = FALSE WHERE type = 'FIXED'");
+		PolicyFixture.reset(jdbc);
 	}
 
 	@Nested
@@ -240,7 +239,7 @@ class PolicyServiceTest extends IntegrationTest {
 		@Test
 		@DisplayName("빈 슬롯이 없으면 EXT_LIMIT_EXCEEDED")
 		void limitExceeded() {
-			fillCustomSlots(200);
+			PolicyFixture.fillCustomSlots(jdbc, 200);
 
 			assertThatThrownBy(() -> service.addCustom("zzz"))
 				.isInstanceOf(PolicyException.class)
@@ -251,7 +250,7 @@ class PolicyServiceTest extends IntegrationTest {
 		@Test
 		@DisplayName("200번째는 성공한다 — 경계값")
 		void twoHundredthSucceeds() {
-			fillCustomSlots(199);
+			PolicyFixture.fillCustomSlots(jdbc, 199);
 
 			assertThat(service.addCustom("zzz").name()).isEqualTo("zzz");
 			assertThat(service.getPolicy().customCount()).isEqualTo(200);
@@ -280,6 +279,15 @@ class PolicyServiceTest extends IntegrationTest {
 			assertThat(service.getPolicy().custom()).isEmpty();
 		}
 
+		/** 호출자가 감사 기록에 <b>실제로 지워진 값</b>을 남길 수 있어야 한다. */
+		@Test
+		@DisplayName("삭제는 실제로 지워진 정규화된 이름을 돌려준다")
+		void deleteReturnsNormalizedName() {
+			service.addCustom("sh");
+
+			assertThat(service.deleteCustom(".SH ").name()).isEqualTo("sh");
+		}
+
 		@Test
 		@DisplayName("없는 이름이면 EXT_NOT_FOUND")
 		void deleteMissing() {
@@ -297,14 +305,5 @@ class PolicyServiceTest extends IntegrationTest {
 				.extracting(e -> ((PolicyException) e).errorCode())
 				.isEqualTo(ErrorCode.EXT_FIXED_NOT_DELETABLE);
 		}
-	}
-
-	/** 슬롯을 1번부터 채운다. 서비스를 거치면 느려서 JDBC 로 직접 넣는다. */
-	private void fillCustomSlots(int count) {
-		jdbc.batchUpdate(
-			"INSERT INTO blocked_extension (name, type, is_blocked, custom_slot) VALUES (?, 'CUSTOM', TRUE, ?)",
-			java.util.stream.IntStream.rangeClosed(1, count)
-				.mapToObj(i -> new Object[] { "c%03d".formatted(i), (short) i })
-				.toList());
 	}
 }

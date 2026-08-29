@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import flow.test.serverdev.policy.domain.BlockedExtension;
 import flow.test.serverdev.support.IntegrationTest;
+import flow.test.serverdev.support.PolicyFixture;
 
 /**
  * 제약 위반 판별식을 <b>실제 위반 예외</b>로 검증한다.
@@ -37,7 +38,7 @@ class ConstraintViolationsTest extends IntegrationTest {
 
 	@BeforeEach
 	void reset() {
-		jdbc.update("DELETE FROM blocked_extension WHERE type = 'CUSTOM'");
+		PolicyFixture.reset(jdbc);
 	}
 
 	@Test

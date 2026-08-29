@@ -1,5 +1,6 @@
 package flow.test.serverdev.policy;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -19,7 +20,12 @@ import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import flow.test.serverdev.support.IntegrationTest;
+import flow.test.serverdev.support.PolicyFixture;
+import org.slf4j.LoggerFactory;
 
 /**
  * 정책 API 의 <b>HTTP 계약</b> 검증. (SPEC §7.0~7.4)
@@ -44,8 +50,7 @@ class PolicyControllerTest extends IntegrationTest {
 
 	@BeforeEach
 	void reset() {
-		jdbc.update("DELETE FROM blocked_extension WHERE type = 'CUSTOM'");
-		jdbc.update("UPDATE blocked_extension SET is_blocked = FALSE WHERE type = 'FIXED'");
+		PolicyFixture.reset(jdbc);
 	}
 
 	@Nested
@@ -184,7 +189,7 @@ class PolicyControllerTest extends IntegrationTest {
 
 			Boolean blocked = jdbc.queryForObject(
 				"SELECT is_blocked FROM blocked_extension WHERE name = 'exe'", Boolean.class);
-			assert Boolean.FALSE.equals(blocked);
+			assertThat(blocked).isFalse();
 		}
 
 		@Test
@@ -323,6 +328,70 @@ class PolicyControllerTest extends IntegrationTest {
 				.andExpect(jsonPath("$.message").value(
 					"exe는 고정 확장자라 삭제할 수 없습니다. 체크를 해제하세요."));
 		}
+	}
+
+	@Nested
+	@DisplayName("감사 로그")
+	class AuditLog {
+
+		/**
+		 * 정책 변경 기록은 <b>실제로 바뀐 값</b>을 남겨야 한다. 입력값을 그대로 적으면
+		 * 정규화가 개입한 요청에서 기록과 저장소가 어긋난다 — 감사 기록이 거짓이 된다.
+		 */
+		@Test
+		@DisplayName("삭제 기록은 정규화된 이름을 남긴다")
+		void deleteLogsNormalizedName() throws Exception {
+			addCustom("sh");
+			ListAppender<ILoggingEvent> appender = attachAppender();
+
+			try {
+				mvc.perform(delete(BASE + "/custom/.SH").header(TOKEN_HEADER, ADMIN_TOKEN))
+					.andExpect(status().isNoContent());
+
+				assertThat(appender.list)
+					.extracting(ILoggingEvent::getFormattedMessage)
+					.anySatisfy(message -> assertThat(message)
+						.contains("action=CUSTOM_DELETE")
+						.contains("extension=sh"));
+			}
+			finally {
+				detachAppender(appender);
+			}
+		}
+
+		@Test
+		@DisplayName("토글 기록도 정규화된 이름을 남긴다")
+		void toggleLogsNormalizedName() throws Exception {
+			ListAppender<ILoggingEvent> appender = attachAppender();
+
+			try {
+				mvc.perform(patch(BASE + "/fixed/.EXE")
+						.header(TOKEN_HEADER, ADMIN_TOKEN)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("{\"blocked\":true}"))
+					.andExpect(status().isOk());
+
+				assertThat(appender.list)
+					.extracting(ILoggingEvent::getFormattedMessage)
+					.anySatisfy(message -> assertThat(message)
+						.contains("action=FIXED_BLOCK")
+						.contains("extension=exe"));
+			}
+			finally {
+				detachAppender(appender);
+			}
+		}
+	}
+
+	private ListAppender<ILoggingEvent> attachAppender() {
+		ListAppender<ILoggingEvent> appender = new ListAppender<>();
+		appender.start();
+		((Logger) LoggerFactory.getLogger(PolicyAuditLogger.class)).addAppender(appender);
+		return appender;
+	}
+
+	private void detachAppender(ListAppender<ILoggingEvent> appender) {
+		((Logger) LoggerFactory.getLogger(PolicyAuditLogger.class)).detachAppender(appender);
 	}
 
 	private void addCustom(String name) throws Exception {
