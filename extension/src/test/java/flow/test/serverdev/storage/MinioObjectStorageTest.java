@@ -200,6 +200,35 @@ class MinioObjectStorageTest {
 	}
 
 	@Nested
+	@DisplayName("저장 실패의 분류")
+	class StoreFailure {
+
+		/**
+		 * ★ 서버가 응답을 보냈어도 <b>객체가 없다고 단정할 수 없다.</b>
+		 *
+		 * <p>처음에는 {@code ErrorResponseException} 을 "확정 실패" 로 분류했다. S3 의
+		 * 5xx({@code InternalError}, {@code ServiceUnavailable})는 서버가 데이터를 이미 받아
+		 * 쓴 뒤에도 날 수 있고, {@code putObject} 에는 "이 코드면 안 써졌다" 를 보장하는 코드가
+		 * 없다. 확실하지 않은 것을 확실하다고 다루면 실제로 저장된 객체를 {@code ERROR} 로
+		 * 확정하게 되고, 그 객체는 정리 대상에서 사라진다.
+		 *
+		 * <p>실제 서버 오류(NoSuchBucket)를 만들어 그 응답이 "모름" 으로 분류되는지 본다.
+		 */
+		@Test
+		@DisplayName("서버가 오류를 응답해도 결과 불명으로 다룬다")
+		void serverErrorIsTreatedAsUnknown() throws Exception {
+			String doomed = "extguard-store-doomed";
+			client.makeBucket(MakeBucketArgs.builder().bucket(doomed).build());
+			MinioObjectStorage onDoomed = new MinioObjectStorage(client, doomed);
+			client.removeBucket(RemoveBucketArgs.builder().bucket(doomed).build());
+
+			byte[] content = binary();
+			assertThatThrownBy(() -> onDoomed.store(key(), new ByteArrayInputStream(content), content.length))
+				.isInstanceOf(StorageOutcomeUnknownException.class);
+		}
+	}
+
+	@Nested
 	@DisplayName("버킷")
 	class Bucket {
 
