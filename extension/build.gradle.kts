@@ -27,6 +27,11 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-security")
 
 	// 스키마는 Flyway가 SSOT. ddl-auto=validate 고정 (SPEC §12)
+	//
+	// ★ spring-boot-flyway 가 반드시 필요하다. Boot 4 는 자동설정을 기술별 모듈로 쪼갰고
+	//   FlywayAutoConfiguration 이 이 모듈에 있다. Boot 3 처럼 flyway-core 만 넣으면
+	//   자동설정 클래스 자체가 없어 마이그레이션이 "조용히" 실행되지 않는다 — 에러도 나지 않는다.
+	implementation("org.springframework.boot:spring-boot-flyway")
 	implementation("org.flywaydb:flyway-core")
 	implementation("org.flywaydb:flyway-database-postgresql")
 	runtimeOnly("org.postgresql:postgresql")
