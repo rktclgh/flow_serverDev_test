@@ -20,8 +20,11 @@ import org.testcontainers.junit.jupiter.Testcontainers;
  *   <li>컴포넌트 스캔과 빈 구성에 순환·누락이 없다
  * </ul>
  *
- * <p><b>보증하지 않는 것</b>: {@code ddl-auto=validate} 는 현재 JPA 엔티티가 하나도 없어
- * 검증할 대상이 없다. 엔티티가 추가되기 전까지 이 설정은 아무것도 확인하지 않는다.
+ * <p>P2 에서 엔티티가 생기면서 {@code ddl-auto=validate} 가 비로소 <b>실제 검사</b>를 하게 됐다.
+ * 그전까지는 검사 대상이 없어 이 테스트가 통과해도 스키마의 존재조차 보증하지 못했고,
+ * 실제로 그 틈으로 Flyway 미실행 결함이 지나갔다({@code FlywayAutoConfigurationTest} 참조).
+ *
+ * <p>역할 분담: 앱이 마이그레이션을 실행하는가는 {@code FlywayMigrationTest} 가,
  * CHECK 제약·트리거의 동작은 {@code SchemaConstraintTest} 가,
  * 문서와 마이그레이션의 일치는 {@code SchemaDriftTest} 가 담당한다.
  */
