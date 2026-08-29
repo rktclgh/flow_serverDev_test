@@ -379,6 +379,114 @@ class UploadAuditSchemaTest {
 		}
 	}
 
+	/**
+	 * 삭제는 <b>객체를 지우고 기록은 남기는</b> 방식이다. (V4)
+	 *
+	 * <p>{@code upload_audit} 에서 행을 지우면 "무엇이 왜 올라갔는가" 를 잃는다. 그것이 이
+	 * 서비스의 존재 이유이므로, 삭제는 행이 아니라 <b>객체</b>에만 적용하고 기록에는
+	 * {@code deleted_at} 이라는 사실을 하나 더 적는다.
+	 *
+	 * <p>그 사실 역시 기록이므로 같은 규칙을 받는다 — <b>한 번만, 되돌릴 수 없이</b>.
+	 * 시각을 다른 시각으로 바꾸는 것도, {@code NULL} 로 되돌리는 것도 기록 조작이다.
+	 */
+	@Nested
+	@DisplayName("deleted_at — 객체는 지우고 기록은 남긴다")
+	class Deletion {
+
+		@Test
+		@DisplayName("ALLOWED 기록에 삭제 시각을 적을 수 있다")
+		void allowedCanBeDeleted() throws SQLException {
+			insertAllowed("a.pdf", "2026/08/29/d1");
+
+			assertThatCode(() -> execute("UPDATE upload_audit SET deleted_at = now()"))
+				.doesNotThrowAnyException();
+		}
+
+		/**
+		 * ★ 되돌리기는 기록 조작이다. 지웠다는 사실을 없던 일로 만들 수 있으면
+		 * "지금 남아 있는 것이 전부인가" 를 아무도 답할 수 없다.
+		 */
+		@Test
+		@DisplayName("한 번 적힌 삭제 시각은 NULL 로 되돌릴 수 없다")
+		void deletedAtCannotBeReverted() throws SQLException {
+			insertAllowed("a.pdf", "2026/08/29/d2");
+			execute("UPDATE upload_audit SET deleted_at = now()");
+
+			assertThatThrownBy(() -> execute("UPDATE upload_audit SET deleted_at = NULL"))
+				.hasMessageContaining("deleted_at");
+		}
+
+		@Test
+		@DisplayName("한 번 적힌 삭제 시각은 다른 시각으로 바꿀 수 없다")
+		void deletedAtCannotBeRewritten() throws SQLException {
+			insertAllowed("a.pdf", "2026/08/29/d3");
+			execute("UPDATE upload_audit SET deleted_at = TIMESTAMPTZ '2026-08-29 01:00:00+09'");
+
+			assertThatThrownBy(() -> execute(
+				"UPDATE upload_audit SET deleted_at = TIMESTAMPTZ '2026-08-29 02:00:00+09'"))
+				.hasMessageContaining("deleted_at");
+		}
+
+		/**
+		 * 저장한 적이 없는 기록에 "지웠다" 를 적을 수는 없다. {@code BLOCKED} 는 객체가 없고,
+		 * {@code PENDING}·{@code ERROR} 는 아직 결말이 아니거나 이미 다른 결말이다.
+		 */
+		@Test
+		@DisplayName("BLOCKED 기록은 삭제 시각을 가질 수 없다")
+		void blockedCannotBeDeleted() {
+			assertThatThrownBy(() -> execute("""
+				INSERT INTO upload_audit (original_filename, result, reason_code, deleted_at)
+				VALUES ('a.exe', 'BLOCKED', 'FILE_BLOCKED_EXTENSION', now())
+				"""))
+				.hasMessageContaining("ck_upload_audit_deleted_at");
+		}
+
+		@Test
+		@DisplayName("PENDING 기록은 삭제 시각을 가질 수 없다")
+		void pendingCannotBeDeleted() throws SQLException {
+			insertPending("a.pdf", "2026/08/29/d4");
+
+			assertThatThrownBy(() -> execute("UPDATE upload_audit SET deleted_at = now()"))
+				.hasMessageContaining("ck_upload_audit_deleted_at");
+		}
+
+		@Test
+		@DisplayName("ERROR 기록은 삭제 시각을 가질 수 없다")
+		void errorCannotBeDeleted() throws SQLException {
+			insertError("a.pdf", "STORAGE_UNAVAILABLE", "2026/08/29/d5");
+
+			assertThatThrownBy(() -> execute("UPDATE upload_audit SET deleted_at = now()"))
+				.hasMessageContaining("ck_upload_audit_deleted_at");
+		}
+
+		/** 삭제했다고 해서 나머지 컬럼이 열리는 것은 아니다. 기존 불변성은 그대로다. */
+		@Test
+		@DisplayName("삭제된 기록의 사실도 여전히 바꿀 수 없다")
+		void deletedRecordStaysImmutable() throws SQLException {
+			insertAllowed("a.pdf", "2026/08/29/d6");
+			execute("UPDATE upload_audit SET deleted_at = now()");
+
+			assertThatThrownBy(() -> execute("UPDATE upload_audit SET original_filename = 'b.pdf'"))
+				.hasMessageContaining("cannot change");
+		}
+
+		/** 목록 질의가 타야 하는 인덱스다. 없으면 행이 쌓일수록 매 조회가 전체를 훑는다. */
+		@Test
+		@DisplayName("살아 있는 ALLOWED 기록만 담는 부분 인덱스가 있다")
+		void partialIndexExists() throws SQLException {
+			String definition = queryOne("""
+				SELECT indexdef FROM pg_indexes
+				WHERE tablename = 'upload_audit' AND indexname = 'idx_upload_audit_visible'
+				""");
+
+			assertThat(definition)
+				.as("목록 조회(result = ALLOWED AND deleted_at IS NULL)를 겨냥한 부분 인덱스")
+				.isNotNull()
+				.contains("deleted_at IS NULL")
+				.contains("occurred_at DESC");
+		}
+	}
+
 	@Nested
 	@DisplayName("값의 형식")
 	class Format {
