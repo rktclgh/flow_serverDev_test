@@ -3,6 +3,13 @@ package flow.test.serverdev.common;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -207,6 +214,56 @@ class RateLimitFilterTest {
 			}
 
 			assertThat(filter.trackedKeys()).isLessThanOrEqualTo(20);
+		}
+
+		/**
+		 * ★ <b>상한 검사와 삽입 사이가 원자적이어야 한다.</b> 밖에서 {@code size()} 를 재고
+		 * 나서 넣으면, 상한 직전에 새 주소가 동시에 몰릴 때 <b>전부가 검사를 통과한 뒤 각자
+		 * 삽입한다.</b> 그렇게 부푼 맵은 다음 교체에서 {@code previous} 로 그대로 넘어가므로
+		 * 상한이 지키려던 메모리 보장이 깨진다.
+		 *
+		 * <p>순차 테스트({@code boundedByEntryCap})로는 이 결함이 드러나지 않는다 — 경합이
+		 * 없으면 두 방식의 결과가 같다. 그래서 스레드를 겹쳐 돌리고, <b>불변식을 요청마다</b>
+		 * 관측한다. 마지막에 한 번만 보면 그 사이에 부풀었다가 교체로 줄어든 순간을 놓친다.
+		 */
+		@Test
+		@DisplayName("★ 새 주소가 동시에 몰려도 상한이 지켜진다")
+		void capHoldsUnderConcurrency() throws Exception {
+			int maxEntries = 8;
+			int threads = 16;
+			int perThread = 40;
+			RateLimitFilter filter = filter(3, 60, Duration.ofMinutes(10), maxEntries);
+
+			ExecutorService pool = Executors.newFixedThreadPool(threads);
+			CountDownLatch start = new CountDownLatch(1);
+			AtomicInteger worst = new AtomicInteger();
+			List<Future<?>> running = new ArrayList<>();
+
+			try {
+				for (int t = 0; t < threads; t++) {
+					int thread = t;
+					running.add(pool.submit(() -> {
+						start.await();
+						for (int i = 0; i < perThread; i++) {
+							// 스레드마다 다른 대역을 써서 키가 겹치지 않는다 — 전부 신규 항목이다.
+							request(filter, "10.%d.%d.%d".formatted(thread, i / 250, i % 250));
+							worst.accumulateAndGet(filter.trackedKeys(), Math::max);
+						}
+						return null;
+					}));
+				}
+				start.countDown();
+				for (Future<?> future : running) {
+					future.get(30, TimeUnit.SECONDS);
+				}
+			}
+			finally {
+				pool.shutdownNow();
+			}
+
+			assertThat(worst.get())
+				.as("한 세대는 상한을 넘길 수 없고, 직전 세대도 한때 그 상한을 지켰다")
+				.isLessThanOrEqualTo(2 * maxEntries);
 		}
 
 		@Test
