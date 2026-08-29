@@ -1,6 +1,7 @@
 package flow.test.serverdev.upload;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -38,6 +39,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import flow.test.serverdev.storage.MinioObjectStorage;
 import flow.test.serverdev.storage.ObjectStorage;
+import flow.test.serverdev.storage.StorageException;
 import flow.test.serverdev.storage.StorageKey;
 import flow.test.serverdev.storage.StorageKeyGenerator;
 import flow.test.serverdev.storage.StorageObjectNotFoundException;
@@ -229,6 +231,91 @@ class FileDeleteControllerTest extends IntegrationTest {
 		}
 	}
 
+	/**
+	 * 객체 삭제가 실패하면 어떻게 되는가. (외부 리뷰 CodeRabbit)
+	 *
+	 * <p>소유권을 먼저 얻는 순서라, 객체 삭제가 실패해도 <b>행은 이미 삭제로 확정</b>돼 있다.
+	 * 그 상태에서 503 을 돌려주면 사용자에게 거짓말이 된다 — 파일은 이미 목록에서도
+	 * 다운로드에서도 사라졌고, 다시 시도하면 404 를 받는다. "실패했으니 다시 해보라" 고
+	 * 말해놓고 다시 하면 "그런 것 없다" 고 답하는 셈이다.
+	 *
+	 * <p>남는 고아 객체는 <b>사용자의 문제가 아니라 우리 쪽 정리 과제</b>다. 로그로 남기고
+	 * 계약대로 204 를 준다. {@code PendingUploadSweeper.sweepOne} 이 같은 실패에
+	 * 같은 판단을 한다.
+	 */
+	@Nested
+	@DisplayName("객체 삭제가 실패해도 계약은 지킨다")
+	class StorageFailure {
+
+		@Test
+		@DisplayName("204 를 준다 — 파일은 이미 사라졌으므로 실패가 아니다")
+		void stillReportsSuccess() throws Exception {
+			UUID fileId = upload("report.pdf");
+			observer().failNextDelete();
+
+			mockMvc.perform(delete("/api/files/{fileId}", fileId)
+					.header("X-Admin-Token", ADMIN_TOKEN))
+				.andExpect(status().isNoContent());
+		}
+
+		@Test
+		@DisplayName("사용자가 보는 상태는 완전히 삭제된 것과 같다")
+		void looksFullyDeleted() throws Exception {
+			UUID fileId = upload("report.pdf");
+			observer().failNextDelete();
+
+			mockMvc.perform(delete("/api/files/{fileId}", fileId)
+					.header("X-Admin-Token", ADMIN_TOKEN))
+				.andExpect(status().isNoContent());
+
+			assertThat(listedNames()).isEmpty();
+			mockMvc.perform(get("/api/files/{fileId}/content", fileId))
+				.andExpect(status().isNotFound());
+		}
+
+		/**
+		 * ★ 고아가 남았다는 사실 자체는 지워지지 않는다. {@code stored_key} 가 그대로라
+		 * 버킷과 대조하면 무엇이 남았는지 찾아낼 수 있다 — 이것이 재시도 컬럼을 두지 않는
+		 * 근거다({@code FileDeleteService} 주석 참고).
+		 */
+		@Test
+		@DisplayName("객체는 남지만 기록으로 추적할 수 있다")
+		void orphanStaysTraceable() throws Exception {
+			UUID fileId = upload("report.pdf");
+			String key = storedKeyOf(fileId);
+			observer().failNextDelete();
+
+			mockMvc.perform(delete("/api/files/{fileId}", fileId)
+					.header("X-Admin-Token", ADMIN_TOKEN))
+				.andExpect(status().isNoContent());
+
+			assertThatCode(() -> storage.load(key).close())
+				.as("삭제가 실패했으므로 객체는 그대로 있어야 한다 — 주입이 실제로 먹혔는지 확인")
+				.doesNotThrowAnyException();
+
+			Map<String, Object> row = jdbc.queryForMap(
+				"SELECT stored_key, deleted_at FROM upload_audit WHERE file_id = ?::uuid",
+				fileId.toString());
+			assertThat(row.get("stored_key")).isEqualTo(key);
+			assertThat(row.get("deleted_at")).isNotNull();
+		}
+
+		/** 두 번째 요청은 여전히 404 다 — 실패했다고 소유권이 돌아오지는 않는다. */
+		@Test
+		@DisplayName("삭제 실패 뒤에도 다시 지울 수는 없다")
+		void ownershipIsNotReturned() throws Exception {
+			UUID fileId = upload("report.pdf");
+			observer().failNextDelete();
+
+			mockMvc.perform(delete("/api/files/{fileId}", fileId)
+					.header("X-Admin-Token", ADMIN_TOKEN))
+				.andExpect(status().isNoContent());
+			mockMvc.perform(delete("/api/files/{fileId}", fileId)
+					.header("X-Admin-Token", ADMIN_TOKEN))
+				.andExpect(status().isNotFound());
+		}
+	}
+
 	@Nested
 	@DisplayName("지울 수 없는 것 — 전부 404 다")
 	class NotFound {
@@ -353,6 +440,7 @@ class FileDeleteControllerTest extends IntegrationTest {
 		private final JdbcTemplate jdbc;
 		private final List<String> deletedKeys = new CopyOnWriteArrayList<>();
 		private final Map<String, Boolean> markedWhenDeleted = new ConcurrentHashMap<>();
+		private volatile boolean failNextDelete;
 
 		DeletionOrderObserver(ObjectStorage delegate, JdbcTemplate jdbc) {
 			this.delegate = delegate;
@@ -362,6 +450,12 @@ class FileDeleteControllerTest extends IntegrationTest {
 		void reset() {
 			deletedKeys.clear();
 			markedWhenDeleted.clear();
+			failNextDelete = false;
+		}
+
+		/** 스토리지 장애를 흉내 낸다. 실제로 MinIO 를 죽일 수는 없으니 이 한 지점만 주입한다. */
+		void failNextDelete() {
+			this.failNextDelete = true;
 		}
 
 		List<String> deletedKeys() {
@@ -389,6 +483,10 @@ class FileDeleteControllerTest extends IntegrationTest {
 				Long.class, key);
 			markedWhenDeleted.put(key, marked != null && marked > 0);
 			deletedKeys.add(key);
+			if (failNextDelete) {
+				failNextDelete = false;
+				throw new StorageException("주입된 삭제 실패");
+			}
 			delegate.delete(key);
 		}
 	}
