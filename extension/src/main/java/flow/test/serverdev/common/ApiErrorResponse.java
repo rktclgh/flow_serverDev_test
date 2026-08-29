@@ -22,4 +22,13 @@ public record ApiErrorResponse(String code, String message, Map<String, Object> 
 	public static ApiErrorResponse of(ErrorCode code, String message) {
 		return new ApiErrorResponse(code.name(), message, Map.of());
 	}
+
+	/**
+	 * {@code detail} 까지 담는다. 판정 결과를 <b>값으로</b> 돌려주는 경로(업로드 거부)는 예외를
+	 * 거치지 않으므로 별도 팩토리가 필요하다.
+	 */
+	public static ApiErrorResponse of(ErrorCode code, String message, Map<String, Object> detail) {
+		return new ApiErrorResponse(code.name(), message, Map.copyOf(detail));
+	}
+
 }
