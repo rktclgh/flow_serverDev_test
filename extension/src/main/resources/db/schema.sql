@@ -16,7 +16,7 @@
 --   앱 검사는 사용자에게 친절한 오류를 주기 위한 것이고,
 --   정합성 보증은 아래 제약과 트리거가 담당한다. API 를 우회해도 지켜져야 한다.
 --
--- 반영된 migration : V1, V2, V3, V4
+-- 반영된 migration : V1, V2, V3, V4, V5
 -- =============================================================================
 
 
@@ -365,3 +365,75 @@ CREATE TRIGGER trg_upload_audit_protect
 --   LEFT JOIN blocked_extension b ON b.custom_slot = s
 --   WHERE b.id IS NULL
 --   ORDER BY s LIMIT 1;
+
+
+-- -----------------------------------------------------------------------------
+-- policy_change_log — 정책 변경 이력
+-- -----------------------------------------------------------------------------
+--
+-- 컬럼
+--   id             BIGINT       PK, 자동 증가
+--   occurred_at    TIMESTAMPTZ  기본값 now()
+--   action         VARCHAR(20)  FIXED_BLOCK | FIXED_UNBLOCK | CUSTOM_ADD | CUSTOM_DELETE
+--   extension_name VARCHAR(20)  정규화된 확장자
+--   client_ip      INET         요청자 주소 (얻지 못하면 NULL)
+--   before_blocked BOOLEAN      토글 전 상태 (커스텀은 NULL)
+--   after_blocked  BOOLEAN      토글 후 상태 (커스텀은 NULL)
+--
+-- upload_audit 이 "무엇이 왜 차단됐는가" 를 답한다면, 이 테이블은 그 판정의 기준이던
+-- 정책이 언제 어떻게 바뀌었는지를 답한다. actor 컬럼을 두지 않은 이유는 V5 주석에 있다.
+
+CREATE TABLE policy_change_log (
+    id             BIGINT      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    action         VARCHAR(20) NOT NULL,
+    extension_name VARCHAR(20) NOT NULL,
+    client_ip      INET,
+    before_blocked BOOLEAN,
+    after_blocked  BOOLEAN,
+
+    CONSTRAINT ck_policy_change_action CHECK (
+        action IN ('FIXED_BLOCK', 'FIXED_UNBLOCK', 'CUSTOM_ADD', 'CUSTOM_DELETE')
+    ),
+
+    CONSTRAINT ck_policy_change_extension CHECK (
+        extension_name ~ '^[a-z0-9]{1,20}$'
+    ),
+
+    -- 토글에만 앞뒤 상태가 있고, 있으면 서로 달라야 한다.
+    -- 바뀌지 않은 토글은 남길 변경이 없다.
+    CONSTRAINT ck_policy_change_transition CHECK (
+        (action IN ('FIXED_BLOCK', 'FIXED_UNBLOCK')
+             AND before_blocked IS NOT NULL AND after_blocked IS NOT NULL
+             AND before_blocked <> after_blocked)
+        OR
+        (action IN ('CUSTOM_ADD', 'CUSTOM_DELETE')
+             AND before_blocked IS NULL AND after_blocked IS NULL)
+    )
+);
+
+CREATE INDEX idx_policy_change_occurred_at ON policy_change_log (occurred_at DESC);
+CREATE INDEX idx_policy_change_extension ON policy_change_log (extension_name, occurred_at DESC);
+
+
+-- 이력은 고쳐 쓸 수 없다. 상태 전이가 없으므로 UPDATE 를 통째로 막는다.
+-- DELETE 는 막지 않는다 — 보존 기간 정리는 운영의 정상적인 행위다.
+CREATE OR REPLACE FUNCTION extguard_protect_policy_change() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'policy change log is append-only (id=%)', OLD.id;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_policy_change_protect
+    BEFORE UPDATE ON policy_change_log
+    FOR EACH ROW EXECUTE FUNCTION extguard_protect_policy_change();
+
+CREATE OR REPLACE FUNCTION extguard_prevent_policy_change_truncate() RETURNS trigger AS $$
+BEGIN
+    RAISE EXCEPTION 'policy_change_log cannot be truncated';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_policy_change_prevent_truncate
+    BEFORE TRUNCATE ON policy_change_log
+    FOR EACH STATEMENT EXECUTE FUNCTION extguard_prevent_policy_change_truncate();

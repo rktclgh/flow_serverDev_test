@@ -69,7 +69,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 		@DisplayName("같은 이름을 동시에 추가하면 1개만 201, 나머지는 EXT_DUPLICATE")
 		void sameNameAddedConcurrently() throws Exception {
 			List<Optional<ErrorCode>> results =
-				runConcurrently(Collections.nCopies(THREADS, () -> service.addCustom("sh")));
+				runConcurrently(Collections.nCopies(THREADS, () -> service.addCustom("sh", null)));
 
 			assertThat(successCount(results)).isEqualTo(1);
 			assertThat(failures(results)).containsOnly(ErrorCode.EXT_DUPLICATE);
@@ -86,7 +86,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 			PolicyFixture.fillCustomSlots(jdbc, 199);
 
 			List<Runnable> attempts = IntStream.range(0, THREADS)
-				.<Runnable>mapToObj(i -> () -> service.addCustom("race" + i))
+				.<Runnable>mapToObj(i -> () -> service.addCustom("race" + i, null))
 				.toList();
 
 			List<Optional<ErrorCode>> results = runConcurrently(attempts);
@@ -99,10 +99,10 @@ class PolicyConcurrencyTest extends IntegrationTest {
 		@Test
 		@DisplayName("동시 삭제는 1개만 204, 나머지는 404 — 응답은 다르지만 결과 상태는 같다")
 		void sameNameDeletedConcurrently() throws Exception {
-			service.addCustom("sh");
+			service.addCustom("sh", null);
 
 			List<Optional<ErrorCode>> results =
-				runConcurrently(Collections.nCopies(THREADS, () -> service.deleteCustom("sh")));
+				runConcurrently(Collections.nCopies(THREADS, () -> service.deleteCustom("sh", null)));
 
 			assertThat(successCount(results)).isEqualTo(1);
 			assertThat(failures(results)).containsOnly(ErrorCode.EXT_NOT_FOUND);
@@ -119,7 +119,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 		@DisplayName("같은 값으로 반복 토글해도 매번 성공하고 상태가 유지된다")
 		void repeatedToggleIsStable() {
 			for (int i = 0; i < 5; i++) {
-				assertThat(service.toggleFixed("exe", true).blocked()).isTrue();
+				assertThat(service.toggleFixed("exe", true, null).blocked()).isTrue();
 			}
 
 			assertThat(isBlocked("exe")).isTrue();
@@ -129,7 +129,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 		@DisplayName("같은 값을 동시에 토글하면 전부 성공한다 — 하나만 통과시키면 안 된다")
 		void sameValueToggledConcurrently() throws Exception {
 			List<Optional<ErrorCode>> results =
-				runConcurrently(Collections.nCopies(THREADS, () -> service.toggleFixed("exe", true)));
+				runConcurrently(Collections.nCopies(THREADS, () -> service.toggleFixed("exe", true, null)));
 
 			assertThat(successCount(results)).isEqualTo(THREADS);
 			assertThat(isBlocked("exe")).isTrue();
@@ -146,7 +146,7 @@ class PolicyConcurrencyTest extends IntegrationTest {
 			List<Runnable> attempts = IntStream.range(0, THREADS)
 				.<Runnable>mapToObj(i -> {
 					boolean blocked = i % 2 == 0;
-					return () -> service.toggleFixed("exe", blocked);
+					return () -> service.toggleFixed("exe", blocked, null);
 				})
 				.toList();
 
@@ -167,9 +167,9 @@ class PolicyConcurrencyTest extends IntegrationTest {
 		void oppositeRulesHoldSimultaneously() throws Exception {
 			List<Runnable> attempts = Stream.concat(
 					// 비멱등: 정확히 하나만 성공해야 한다
-					IntStream.range(0, 4).<Runnable>mapToObj(i -> () -> service.addCustom("sh")),
+					IntStream.range(0, 4).<Runnable>mapToObj(i -> () -> service.addCustom("sh", null)),
 					// 멱등: 전부 성공해야 한다
-					IntStream.range(0, 4).<Runnable>mapToObj(i -> () -> service.toggleFixed("exe", true)))
+					IntStream.range(0, 4).<Runnable>mapToObj(i -> () -> service.toggleFixed("exe", true, null)))
 				.toList();
 
 			List<Optional<ErrorCode>> results = runConcurrently(attempts);
@@ -199,11 +199,11 @@ class PolicyConcurrencyTest extends IntegrationTest {
 			List<Runnable> attempts = new ArrayList<>();
 			for (int i = 0; i < 6; i++) {
 				String name = "churn" + i;
-				attempts.add(() -> service.addCustom(name));
-				attempts.add(() -> service.deleteCustom(name));
+				attempts.add(() -> service.addCustom(name, null));
+				attempts.add(() -> service.deleteCustom(name, null));
 			}
-			attempts.add(() -> service.toggleFixed("exe", true));
-			attempts.add(() -> service.toggleFixed("js", true));
+			attempts.add(() -> service.toggleFixed("exe", true, null));
+			attempts.add(() -> service.toggleFixed("js", true, null));
 
 			runConcurrently(attempts);
 
