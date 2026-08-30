@@ -2,6 +2,7 @@ package flow.test.serverdev.policy;
 
 import java.util.Comparator;
 import java.util.List;
+import java.net.InetAddress;
 import java.util.Map;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -51,8 +52,12 @@ public class PolicyService {
 	private final ExtensionNormalizer normalizer;
 	private final TransactionTemplate transactionTemplate;
 
+	private final PolicyChangeRecorder changeRecorder;
+
 	public PolicyService(BlockedExtensionRepository repository, ExtensionNormalizer normalizer,
-			TransactionTemplate transactionTemplate) {
+			TransactionTemplate transactionTemplate,
+			PolicyChangeRecorder changeRecorder) {
+		this.changeRecorder = changeRecorder;
 		this.repository = repository;
 		this.normalizer = normalizer;
 		this.transactionTemplate = transactionTemplate;
@@ -85,14 +90,19 @@ public class PolicyService {
 	 * 토글은 멱등이라 실해가 없다. 화면은 응답 후 목록을 재조회해 서버 상태와 맞춘다.
 	 */
 	@Transactional
-	public PolicyResponse.FixedItem toggleFixed(String rawName, boolean blocked) {
+	public PolicyResponse.FixedItem toggleFixed(String rawName, boolean blocked,
+			InetAddress clientIp) {
 		String name = normalizeForLookup(rawName);
 
 		BlockedExtension extension = repository.findByName(name)
 			.filter(found -> found.type() == ExtensionType.FIXED)
 			.orElseThrow(() -> notFound(name));
 
+		// 바뀌기 전 상태를 먼저 붙잡는다. 바꾼 뒤에는 읽을 수 없다.
+		boolean before = extension.isBlocked();
 		extension.changeBlocked(blocked);
+		changeRecorder.toggled(name, before, blocked, clientIp);
+
 		return new PolicyResponse.FixedItem(extension.name(), extension.isBlocked());
 	}
 
@@ -103,14 +113,14 @@ public class PolicyService {
 	 * 새 트랜잭션을 요구하기 때문이다(위 {@link #SLOT_RETRY} 참조). 실제 쓰기는
 	 * {@code transactionTemplate} 안에서 일어난다.
 	 */
-	public PolicyResponse.CustomItem addCustom(String rawName) {
+	public PolicyResponse.CustomItem addCustom(String rawName, InetAddress clientIp) {
 		// 정규화는 DB 를 건드릴 이유가 없으므로 트랜잭션 밖에서 끝낸다.
 		// 형식 오류 하나 때문에 커넥션을 잡고 잠금을 거는 것은 낭비다.
 		String name = normalizeForCreate(rawName);
 
 		for (int attempt = 1; attempt <= SLOT_RETRY; attempt++) {
 			try {
-				return transactionTemplate.execute(status -> insertCustom(name));
+				return transactionTemplate.execute(status -> insertCustom(name, clientIp));
 			}
 			catch (DataIntegrityViolationException exception) {
 				// 이름 충돌은 재시도해도 결과가 같다 — 즉시 판정한다.
@@ -145,7 +155,7 @@ public class PolicyService {
 	 * 실제로 사라진 것은 {@code sh} 다. 기록이 사실과 다르면 감사 기록의 의미가 없다.
 	 */
 	@Transactional
-	public PolicyResponse.CustomItem deleteCustom(String rawName) {
+	public PolicyResponse.CustomItem deleteCustom(String rawName, InetAddress clientIp) {
 		String name = normalizeForLookup(rawName);
 
 		ExtensionType type = repository.findTypeByName(name).orElseThrow(() -> notFound(name));
@@ -163,12 +173,13 @@ public class PolicyService {
 			throw notFound(name);
 		}
 
+		changeRecorder.customDeleted(name, clientIp);
 		return new PolicyResponse.CustomItem(name);
 	}
 
 	// --- 내부 ---------------------------------------------------------------
 
-	private PolicyResponse.CustomItem insertCustom(String name) {
+	private PolicyResponse.CustomItem insertCustom(String name, InetAddress clientIp) {
 		// 잠금을 먼저 잡아야 "빈 슬롯 조회 → INSERT" 사이에 다른 요청이 끼어들지 못한다.
 		repository.lockPolicy();
 
@@ -184,6 +195,7 @@ public class PolicyService {
 		// saveAndFlush 여야 한다. save 만 하면 제약 위반이 커밋 시점에 터져
 		// 이 메서드 밖에서 발생하고, 아래의 사유별 판정이 무력화된다.
 		BlockedExtension saved = repository.saveAndFlush(BlockedExtension.custom(name, slot));
+		changeRecorder.customAdded(saved.name(), clientIp);
 		return new PolicyResponse.CustomItem(saved.name());
 	}
 
