@@ -80,7 +80,7 @@ public class UploadService {
 			InputStream content, InetAddress clientIp) {
 		StorageKey key = keyGenerator.generate();
 		UploadAttempt attempt = new UploadAttempt(rawFilename, clientIp, size,
-			accepted.extension().orElse(null), note(accepted.middleSegments()));
+			accepted.extension().orElse(null), accepted.note());
 
 		// ① 자리를 먼저 잡는다. 여기서 실패하면 스토리지는 손도 대지 않은 상태다.
 		long auditId = audit.beginPending(attempt, key);
@@ -110,8 +110,4 @@ public class UploadService {
 			blocked instanceof String extension ? extension : null, null);
 	}
 
-	/** 중간 세그먼트는 <b>관측 전용</b>이다. 차단 판정에 쓰지 않고 기록에만 남긴다(SPEC §5). */
-	private static String note(List<String> middleSegments) {
-		return middleSegments.isEmpty() ? null : "middleSegments=" + String.join(",", middleSegments);
-	}
 }
