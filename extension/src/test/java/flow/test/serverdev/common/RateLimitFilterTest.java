@@ -65,12 +65,17 @@ class RateLimitFilterTest {
 
 	private final CountingChain chain = new CountingChain();
 
-	private MockHttpServletResponse request(RateLimitFilter filter, String ip) throws Exception {
-		MockHttpServletRequest request = new MockHttpServletRequest("POST", "/api/files");
+	private MockHttpServletResponse request(RateLimitFilter filter, String ip, String method)
+			throws Exception {
+		MockHttpServletRequest request = new MockHttpServletRequest(method, "/api/files");
 		request.setRemoteAddr(ip);
 		MockHttpServletResponse response = new MockHttpServletResponse();
 		filter.doFilter(request, response, chain);
 		return response;
+	}
+
+	private MockHttpServletResponse request(RateLimitFilter filter, String ip) throws Exception {
+		return request(filter, ip, "POST");
 	}
 
 	@Nested
@@ -315,5 +320,56 @@ class RateLimitFilterTest {
 		filter.doFilter(request, response, chain);
 
 		assertThat(response.getStatus()).isEqualTo(200);
+	}
+	/**
+	 * ★ 이 필터는 <b>업로드</b> 속도 제한이다.
+	 *
+	 * <p>등록은 서블릿 url-pattern 이라 메서드를 구분하지 못한다. 필터가 직접 갈라야 한다.
+	 * 갈라놓지 않으면 <b>목록 조회가 업로드 할당량을 깎는다</b> — 화면은 업로드·삭제마다
+	 * 목록을 다시 부르므로, 정상 사용이 스스로 한도를 소모해 업로드가 429 로 잠긴다.
+	 * 실측으로 확인했다: {@code GET /api/files} 11번이면 그 다음 업로드가 429 였다.
+	 */
+	@Nested
+	@DisplayName("업로드만 차감한다")
+	class UploadOnly {
+
+		@Test
+		@DisplayName("GET 은 아무리 보내도 차감하지 않는다")
+		void getDoesNotConsume() throws Exception {
+			RateLimitFilter filter = filter();
+
+			for (int i = 0; i < 50; i++) {
+				assertThat(request(filter, IP, "GET").getStatus())
+					.as("%d번째 조회", i + 1).isEqualTo(200);
+			}
+		}
+
+		/** 조회를 아무리 해도 업로드 몫은 그대로 남아 있어야 한다. */
+		@Test
+		@DisplayName("GET 을 한도 이상 보낸 뒤에도 업로드는 용량만큼 통과한다")
+		void getLeavesUploadBudgetIntact() throws Exception {
+			RateLimitFilter filter = filter();
+
+			for (int i = 0; i < 50; i++) {
+				request(filter, IP, "GET");
+			}
+
+			assertThat(request(filter, IP, "POST").getStatus()).isEqualTo(200);
+			assertThat(request(filter, IP, "POST").getStatus()).isEqualTo(200);
+			assertThat(request(filter, IP, "POST").getStatus()).isEqualTo(200);
+			assertThat(request(filter, IP, "POST").getStatus()).isEqualTo(429);
+		}
+
+		/** 삭제도 업로드 몫을 건드리지 않는다 — 관리 토큰으로 이미 보호된 경로다. */
+		@Test
+		@DisplayName("DELETE 도 차감하지 않는다")
+		void deleteDoesNotConsume() throws Exception {
+			RateLimitFilter filter = filter();
+
+			for (int i = 0; i < 50; i++) {
+				assertThat(request(filter, IP, "DELETE").getStatus()).isEqualTo(200);
+			}
+			assertThat(request(filter, IP, "POST").getStatus()).isEqualTo(200);
+		}
 	}
 }
