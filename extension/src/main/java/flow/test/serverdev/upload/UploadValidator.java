@@ -1,5 +1,6 @@
 package flow.test.serverdev.upload;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -66,7 +67,8 @@ public class UploadValidator {
 				Map.of("signature", signature.get().name()));
 		}
 
-		return new UploadDecision.Accepted(ok.safeName(), ok.lastExtension(), ok.middleSegments());
+		return new UploadDecision.Accepted(ok.safeName(), ok.lastExtension(),
+			noteFor(ok.middleSegments()));
 	}
 
 	/**
@@ -84,6 +86,26 @@ public class UploadValidator {
 	 * 목록에 있는 것과 차단된 것은 다르다. 고정 확장자 7개는 기본이 <b>체크 해제</b>이므로
 	 * 행이 존재해도 {@code is_blocked} 가 거짓이면 통과시킨다.
 	 */
+	/**
+	 * 중간 세그먼트에 대한 <b>관측</b>. 차단하지 않는다.
+	 *
+	 * <p>{@code invoice.exe.pdf} 는 실제로 PDF 다. 중간 세그먼트를 차단 사유로 쓰면 정상 파일을
+	 * 오탐한다(외부 리뷰의 같은 제안을 그 근거로 반려했다). 그렇다고 못 본 척하지도 않는다 —
+	 * <b>차단 목록에 있는 확장자가 중간에 숨어 있는 것</b>은 위장 시도의 신호일 수 있으므로
+	 * 기록만 남긴다.
+	 *
+	 * <p><b>남기는 것은 이름이지 값이 아니다.</b> 세그먼트 이름은 {@code original_filename} 에
+	 * 이미 통째로 들어 있어 중복이고, 목록을 이어 붙이면 길이가 파일명에 따라 자라
+	 * {@code note} 컬럼(40자)을 넘긴다 — 실제로 평범한 파일이 500 이 됐다.
+	 * 신호 이름은 길이가 고정이라 구조적으로 상한 안이다.
+	 */
+	private String noteFor(List<String> middleSegments) {
+		boolean suspicious = middleSegments.stream()
+			.map(repository::findByName)
+			.anyMatch(found -> found.filter(BlockedExtension::isBlocked).isPresent());
+		return suspicious ? AuditNotes.SUSPICIOUS_MIDDLE_SEGMENT : null;
+	}
+
 	private Optional<UploadDecision> rejectIfBlocked(String extension) {
 		return repository.findByName(extension)
 			.filter(BlockedExtension::isBlocked)

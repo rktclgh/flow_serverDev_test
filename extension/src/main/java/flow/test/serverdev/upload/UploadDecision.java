@@ -1,6 +1,5 @@
 package flow.test.serverdev.upload;
 
-import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -20,9 +19,10 @@ public sealed interface UploadDecision {
 	 *
 	 * @param safeName       경로 구분자와 후행 점·공백을 제거한 basename
 	 * @param extension      정규화된 마지막 확장자. 허용 설정이 켜져 있으면 비어 있을 수 있다
-	 * @param middleSegments 관측 전용. 판정에 쓰지 않고 감사에만 남긴다
+	 * @param note 관측 전용 <b>신호 이름</b>. 판정에 쓰지 않고 감사에만 남긴다.
+	 *             값이 아니라 이름이므로 파일명 길이와 무관하게 컬럼 상한 안에 들어온다
 	 */
-	record Accepted(String safeName, Optional<String> extension, List<String> middleSegments)
+	record Accepted(String safeName, Optional<String> extension, String note)
 		implements UploadDecision {
 	}
 
