@@ -18,6 +18,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
 /**
@@ -61,6 +62,9 @@ public class RateLimitFilter implements Filter {
 	/** 속도 제한을 거는 경로. 계약이므로 상수로 둔다. */
 	static final String UPLOAD_PATH = "/api/files";
 
+	/** 이 경로에서 차감 대상은 업로드뿐이다. 목록 조회·다운로드·삭제는 통과시킨다. */
+	private static final String UPLOAD_METHOD = "POST";
+
 	/** 주소를 얻지 못한 요청이 모이는 키. {@code null} 을 맵에 넣을 수 없어 이름을 준다. */
 	private static final String UNKNOWN_ADDRESS = "";
 
@@ -92,6 +96,18 @@ public class RateLimitFilter implements Filter {
 	public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
 			throws IOException, ServletException {
 
+		// ★ 이 필터는 업로드 속도 제한이다. 등록은 서블릿 url-pattern 이라 메서드를 구분하지
+		//   못하므로 여기서 갈라야 한다. 갈라놓지 않으면 목록 조회(GET)가 업로드 할당량을
+		//   깎는다 — 화면은 업로드·삭제마다 목록을 다시 부르므로 정상 사용이 스스로 한도를
+		//   소모해 업로드가 429 로 잠긴다. 실측했다: GET 11번이면 그 다음 업로드가 429 였다.
+		//
+		//   읽기를 앱에서 제한하지 않는 것은 §10.4 의 역할 분담과 같다 — 앱 계층은 UX 용이고
+		//   실질 방어는 nginx 다. 삭제는 관리 토큰이 이미 막고 있다.
+		if (!isRateLimited(request)) {
+			chain.doFilter(request, response);
+			return;
+		}
+
 		long now = nanoTime.getAsLong();
 		String key = keyOf(request);
 		Bucket bucket = consume(key, now);
@@ -119,6 +135,11 @@ public class RateLimitFilter implements Filter {
 	 * 항목 수가 어긋나지 않는다. {@code size()} 로 밖에서 세면 그 보장이 없다 — 아래
 	 * {@link Generation#admit()} 주석 참고.
 	 */
+	/** 상태를 바꾸는 업로드만 차감 대상이다. */
+	private static boolean isRateLimited(ServletRequest request) {
+		return request instanceof HttpServletRequest http && UPLOAD_METHOD.equals(http.getMethod());
+	}
+
 	private Bucket consume(String key, long now) {
 		Generation current = rotateIfNeeded(now);
 		Bucket updated = current.buckets().compute(key, (ignored, existing) -> {
