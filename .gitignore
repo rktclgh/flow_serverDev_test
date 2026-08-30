@@ -8,5 +8,29 @@
 # 과제 원문(회사 문서) — 공개 저장소에 올리지 않는다
 과제_파일업로드_AI개발.md
 
-# 내부 설계 문서 — 제출 시점에 CONSIDERATIONS.md 로 정제할 예정
+# 내부 설계 문서 — 구현 지시서. 제출물이 아니다.
 SPEC.md
+
+# 제출용 문서 — 제출 시점에 직접 전달한다.
+# 저장소에 두면 편집·수정 과정이 커밋 히스토리에 그대로 남는다.
+PROMPT_LOG.md
+CONSIDERATIONS.md
+SUBMISSION.md
+PROMPT_LOG_RAW.md
+
+# jqwik 이 실패 케이스를 재현하려고 남기는 로컬 캐시
+.jqwik-database
+
+# 작업 지침 — 인프라 접속 정보와 민감정보가 들어간다. 절대 커밋하지 않는다.
+CLAUDE.md
+
+# 개발 머신의 SSH 설정에 묶인 스크립트 — 다른 사람에게는 동작하지 않는다
+start-tunnel.sh
+deploy/setup-remote-db.sh
+
+# 배포 스크립트와 nginx 설정, 서버 전용 compose.
+# 이 서버에서만 의미가 있고 도메인·인증서 경로·내부 포트, 그리고 같은 호스트에서
+# 도는 다른 서비스 이름까지 담고 있다. 공개 저장소에 둘 이유가 없다.
+# 평가자가 실행하는 데 필요한 것은 docker-compose.yml 과 Dockerfile 로 충분하다.
+deploy/
+docker-compose.prod.yml
