@@ -108,7 +108,7 @@ export function PolicyPanel({ onPolicyChange }: Props) {
       >
         <input
           value={input}
-          maxLength={NAME_MAX + 1}
+          maxLength={NAME_MAX}
           placeholder="확장자 입력 (최대 20자)"
           aria-label="추가할 확장자"
           disabled={busy || full}

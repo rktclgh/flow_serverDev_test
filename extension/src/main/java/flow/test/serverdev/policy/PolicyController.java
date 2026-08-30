@@ -14,6 +14,10 @@ import org.springframework.web.bind.annotation.RestController;
 import flow.test.serverdev.policy.dto.CustomCreateRequest;
 import flow.test.serverdev.policy.dto.FixedToggleRequest;
 import flow.test.serverdev.policy.dto.PolicyResponse;
+import java.net.InetAddress;
+
+import flow.test.serverdev.audit.ClientAddresses;
+
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 
@@ -48,7 +52,7 @@ public class PolicyController {
 	public PolicyResponse.FixedItem toggleFixed(@PathVariable String name,
 			@Valid @RequestBody FixedToggleRequest request, HttpServletRequest http) {
 
-		PolicyResponse.FixedItem item = policyService.toggleFixed(name, request.blocked());
+		PolicyResponse.FixedItem item = policyService.toggleFixed(name, request.blocked(), clientIp(http));
 		auditLogger.changed(item.blocked() ? "FIXED_BLOCK" : "FIXED_UNBLOCK", item.name(), http);
 		return item;
 	}
@@ -63,7 +67,7 @@ public class PolicyController {
 	public PolicyResponse.CustomItem addCustom(@Valid @RequestBody CustomCreateRequest request,
 			HttpServletRequest http) {
 
-		PolicyResponse.CustomItem item = policyService.addCustom(request.name());
+		PolicyResponse.CustomItem item = policyService.addCustom(request.name(), clientIp(http));
 		auditLogger.changed("CUSTOM_ADD", item.name(), http);
 		return item;
 	}
@@ -75,7 +79,12 @@ public class PolicyController {
 	@DeleteMapping("/custom/{name}")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void deleteCustom(@PathVariable String name, HttpServletRequest http) {
-		PolicyResponse.CustomItem deleted = policyService.deleteCustom(name);
+		PolicyResponse.CustomItem deleted = policyService.deleteCustom(name, clientIp(http));
 		auditLogger.changed("CUSTOM_DELETE", deleted.name(), http);
+	}
+
+	/** nginx 가 넣는 `X-Forwarded-For` 를 톰캣이 반영한 값이다. 얻지 못하면 null 로 남긴다. */
+	private static InetAddress clientIp(HttpServletRequest http) {
+		return ClientAddresses.parse(http.getRemoteAddr()).orElse(null);
 	}
 }

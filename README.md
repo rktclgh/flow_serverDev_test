@@ -163,6 +163,38 @@ IP 별 시도 횟수를 세는 것 자체가 불가능해집니다. `INET` 은 �
 요구하는 `PENDING → ALLOWED|ERROR` 전이와 `deleted_at` 의 단방향 1회 설정만 열려 있습니다.
 삭제도 마찬가지입니다 — 객체만 지우고 행은 남깁니다. 삭제 역시 일어난 일이기 때문입니다.
 
+### `policy_change_log` — 정책 변경 이력
+
+`upload_audit` 이 "무엇이 왜 차단됐는가" 를 답한다면, 이 테이블은 **그 판정의 기준이던 정책이
+언제 어떻게 바뀌었는가** 를 답합니다.
+
+| 컬럼 | 타입 | 제약 | 설명 |
+|---|---|---|---|
+| `id` | `BIGINT` | PK | |
+| `occurred_at` | `TIMESTAMPTZ` | `NOT NULL DEFAULT now()` | |
+| `action` | `VARCHAR(20)` | `CHECK IN ('FIXED_BLOCK','FIXED_UNBLOCK','CUSTOM_ADD','CUSTOM_DELETE')` | 무엇을 했는가 |
+| `extension_name` | `VARCHAR(20)` | `NOT NULL`, `CHECK ^[a-z0-9]{1,20}$` | 대상 확장자(정규화된 값) |
+| `client_ip` | `INET` | | 요청자 주소 |
+| `before_blocked` | `BOOLEAN` | | 토글 전 상태. 커스텀은 `NULL` |
+| `after_blocked` | `BOOLEAN` | | 토글 후 상태. 커스텀은 `NULL` |
+
+**인덱스** — `idx_policy_change_occurred_at`(최근순), `idx_policy_change_extension`(확장자별 이력).
+
+**기록 위치가 설계의 핵심입니다.** 컨트롤러가 아니라 **정책을 실제로 바꾸는 트랜잭션 안**에서
+씁니다. 바깥에서 쓰면 정책은 바뀌었는데 이력만 빠지는 경로가 생깁니다. 실패한 요청은 롤백과
+함께 이력도 사라집니다.
+
+**바뀌지 않은 토글은 남기지 않습니다.** 토글은 멱등이라 같은 값으로 다시 불러도 성공하는데,
+그것까지 남기면 "언제 무엇이 바뀌었나" 를 묻는 조회가 오염됩니다. `ck_policy_change_transition`
+이 앞뒤 상태가 같은 행을 거부합니다.
+
+**`actor` 컬럼은 두지 않았습니다.** 관리 토큰이 하나라 항상 같은 값이 되어, 그 컬럼이 무언가를
+구분해 준다고 오해하게 만듭니다. 계정 체계가 들어오는 시점에 추가합니다.
+
+**이력도 고쳐 쓸 수 없습니다.** `upload_audit` 과 같은 원칙이며, 이쪽은 상태 전이가 없으므로
+`UPDATE` 를 통째로 막습니다. `TRUNCATE` 도 막고, `DELETE` 만 열어 두었습니다 — 보존 기간
+정리는 운영의 정상적인 행위입니다.
+
 ---
 
 ## API
@@ -262,7 +294,7 @@ extension/                     Spring Boot (Java 21, Gradle Kotlin DSL)
     storage/                   오브젝트 스토리지 추상화 (MinIO 구현)
     common/                    오류 계약, 관리 토큰 필터, 속도 제한, 보안 헤더
   src/main/resources/db/
-    migration/                 Flyway V1~V4 — 스키마의 단일 진실 원천
+    migration/                 Flyway V1~V5 — 스키마의 단일 진실 원천
     schema.sql                 전체 스키마 정본 (문서)
   src/test/                    단위 · property · Testcontainers 통합 테스트
 
@@ -335,4 +367,4 @@ docker rm -f <위에서 확인한 컨테이너 ID>
 - **`PROMPT_LOG.md`** — AI 를 어떻게 썼는지의 기록. 그대로 쓴 것 / 고쳐 쓴 것 / 버린 것과
   그 근거, AI 가 틀렸는데 실측으로 잡아낸 사례를 시간순으로 남겼습니다.
 
-두 문서는 편집 이력이 저장소에 남지 않도록 제출물로 별도 전달합니다.
+두 문서는 제출물로 함께 전달합니다.
