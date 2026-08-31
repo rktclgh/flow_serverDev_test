@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { AdminToken } from './components/AdminToken'
+import { AuditPanel } from './components/AuditPanel'
 import { FilePanel } from './components/FilePanel'
 import { PolicyPanel } from './components/PolicyPanel'
 import { ToastHost } from './components/ToastHost'
@@ -10,7 +11,13 @@ import './App.css'
 
 export default function App() {
   const [policy, setPolicy] = useState<PolicyResponse | null>(null)
-  const onPolicyChange = useCallback((next: PolicyResponse) => setPolicy(next), [])
+  // 정책이 바뀔 때마다 증가한다. 활동 로그가 이 값을 보고 다시 읽는다 —
+  // 정책 화면과 로그가 서로를 모르게 두면서도 "바뀌면 갱신" 을 만족시키는 가장 얇은 연결이다.
+  const [policyRevision, setPolicyRevision] = useState(0)
+  const onPolicyChange = useCallback((next: PolicyResponse) => {
+    setPolicy(next)
+    setPolicyRevision((n) => n + 1)
+  }, [])
 
   /**
    * 토큰 자체는 sessionStorage 가 갖고 있지만 그 변화는 React 가 모른다.
@@ -31,6 +38,7 @@ export default function App() {
         <PolicyPanel onPolicyChange={onPolicyChange} />
         <UploadPanel policy={policy} />
         <FilePanel hasAdminToken={hasAdminToken} />
+        <AuditPanel hasAdminToken={hasAdminToken} policyRevision={policyRevision} />
       </main>
 
       <ToastHost />
