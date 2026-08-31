@@ -220,3 +220,51 @@ input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); ou
 
 /* 고른 카드는 테두리로 표시한다. 체크박스만으로는 그리드에서 눈에 잘 안 띈다. */
 .file-card.selected { border-color: var(--accent); background: #131826; }
+
+/* ── 활동 로그 ────────────────────────────────────────────── */
+/* 로그는 화면 전체 폭을 쓴다. 시간·종류·판정·대상·사유가 한 줄에 들어가야 훑을 수 있다. */
+.panel.audit { grid-column: 1 / -1; }
+
+.audit-head { display: flex; align-items: center; gap: 12px; }
+.audit-head h2 { margin: 0; }
+.audit-head button {
+  margin-left: auto;
+  border: 1px solid var(--line); background: #1c2130; color: var(--text);
+  padding: 4px 10px; border-radius: 6px; font-size: 12px;
+}
+.audit-head button:hover:not(:disabled) { border-color: var(--accent); }
+.audit-head button:disabled { opacity: .45; cursor: not-allowed; }
+
+.audit-list {
+  list-style: none; padding: 0; margin: 12px 0 0;
+  /* 로그가 길어져도 페이지가 늘어나지 않게 자체 스크롤을 준다. */
+  max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.audit-row {
+  display: grid;
+  grid-template-columns: 128px 52px 68px minmax(0, 1fr) minmax(0, 1fr) 116px;
+  gap: 10px; align-items: baseline;
+  padding: 7px 12px; font-size: 12px;
+  border-bottom: 1px solid var(--line);
+  /* 왼쪽 색 띠로 판정을 구분한다. 배경을 칠하면 목록이 시끄러워진다. */
+  border-left: 3px solid transparent;
+}
+.audit-row:last-child { border-bottom: 0; }
+.audit-row.bad { border-left-color: var(--danger); }
+.audit-row.ok { border-left-color: var(--accent); }
+.audit-row.policy { border-left-color: #8b7cf6; }
+
+.audit-row time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.audit-kind { color: var(--muted); }
+.audit-action { font-weight: 600; }
+/* 파일명은 길다. 넘치면 말줄임하고 전체는 title 로 본다. */
+.audit-target { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audit-detail { color: var(--muted); overflow-wrap: anywhere; }
+.audit-ip { color: var(--muted); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 860px) {
+  /* 좁은 화면에서는 사유를 접는다. 다섯 칸이 들어가지 않는다. */
+  .audit-row { grid-template-columns: 104px 44px 60px minmax(0, 1fr); }
+  .audit-detail, .audit-ip { display: none; }
+}
