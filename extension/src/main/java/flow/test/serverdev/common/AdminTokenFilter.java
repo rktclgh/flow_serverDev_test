@@ -73,6 +73,15 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 	 */
 	private static final PathPattern FILE_PATHS = parse("/api/files/**");
 
+	/**
+	 * 활동 로그. <b>읽기인데도 보호한다</b> — 지금까지의 "읽기는 공개" 규칙에 대한 유일한 예외다.
+	 *
+	 * <p>이 경로는 관리 화면의 로그이고, 다른 사용자가 올린 <b>파일명과 차단 이력</b>이 담긴다.
+	 * 업로드가 공개인 서비스에서 그 목록을 누구나 훑을 수 있으면, 무엇이 올라왔는지가 그대로
+	 * 드러난다. 상태를 바꾸지 않는다는 것과 보여줘도 된다는 것은 다른 문제다.
+	 */
+	private static final PathPattern AUDIT_PATHS = parse("/api/audit/**");
+
 	private static PathPattern parse(String pattern) {
 		return PathPatternParser.defaultInstance.parse(pattern);
 	}
@@ -122,14 +131,24 @@ public class AdminTokenFilter extends OncePerRequestFilter {
 	 */
 	@Override
 	protected boolean shouldNotFilter(HttpServletRequest request) {
-		if (SAFE_METHODS.contains(request.getMethod())) {
-			return true;
-		}
 		// 디스패처가 컨트롤러를 고를 때와 같은 방식으로 경로를 읽는다.
 		// getRequestURI() 를 그대로 쓰면 인코딩된 변형이 이 판정만 비켜 간다.
 		PathContainer path = RequestPath
 			.parse(request.getRequestURI(), request.getContextPath())
 			.pathWithinApplication();
+
+		// ★ 경로를 메서드보다 먼저 본다.
+		//
+		//   전에는 안전한 메서드를 먼저 통과시켰다. 그러면 활동 로그처럼 "읽기지만 보호해야
+		//   하는" 경로를 아무리 패턴에 넣어도 GET 요청이 이 판정에 닿지도 못한다.
+		//   보호 대상을 추가했는데 조용히 열려 있는 상태가 되는 것이 이 순서의 위험이다.
+		if (AUDIT_PATHS.matches(path)) {
+			return false;
+		}
+
+		if (SAFE_METHODS.contains(request.getMethod())) {
+			return true;
+		}
 
 		if (POLICY_PATHS.matches(path)) {
 			return false;

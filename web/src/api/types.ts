@@ -77,3 +77,18 @@ export interface BulkDeleteResponse {
   deleted: string[]
   notFound: string[]
 }
+
+/** 활동 로그 한 줄. 정책 변경과 업로드 판정이 같은 모양으로 내려온다. */
+export interface AuditEntry {
+  at: string
+  kind: 'POLICY' | 'UPLOAD'
+  action: string
+  target: string
+  detail: string | null
+  /** 요청자 주소. 관리자가 여럿이 되기 전까지 "누가" 를 대신한다. */
+  clientIp: string | null
+}
+
+export interface AuditResponse {
+  entries: AuditEntry[]
+}

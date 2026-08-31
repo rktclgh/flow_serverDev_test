@@ -190,4 +190,23 @@ class AdminTokenPathBypassTest extends IntegrationTest {
 		assertThat(http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode())
 			.isEqualTo(200);
 	}
+
+	/**
+	 * 활동 로그는 <b>읽기인데도</b> 보호 대상이다. 인코딩을 바꿔 그 예외를 비켜 갈 수 있으면
+	 * 보호했다고 말할 수 없다. 파일 삭제에서 실제로 뚫렸던 것과 같은 변형으로 확인한다.
+	 */
+	@Test
+	@DisplayName("활동 로그는 인코딩을 바꿔도 토큰 없이 열리지 않는다")
+	void encodedAuditPathStaysProtected() throws Exception {
+		for (String raw : new String[] { "/api/audit", "/api/%61udit", "/%61pi/%61udit" }) {
+			HttpRequest request = HttpRequest.newBuilder()
+				.uri(URI.create("http://localhost:" + port + raw))
+				.GET()
+				.build();
+			int status = http.send(request, HttpResponse.BodyHandlers.ofString()).statusCode();
+
+			assertThat(status / 100).as("%s 가 2xx 를 받으면 안 된다 (실제 %d)", raw, status)
+				.isNotEqualTo(2);
+		}
+	}
 }
