@@ -210,7 +210,12 @@ IP 별 시도 횟수를 세는 것 자체가 불가능해집니다. `INET` 은 �
 | `GET` | `/api/files/{fileId}/content` | | 다운로드 |
 | `DELETE` | `/api/files/{fileId}` | 필요 | 파일 삭제 → `204` (기록은 남습니다) |
 | `DELETE` | `/api/files` | 필요 | 여러 건 삭제. 본문 `{"fileIds": [...]}`, 최대 100건 → `200` |
+| `GET` | `/api/audit` | 필요 | 활동 로그. 정책 변경과 업로드 판정을 최신순으로. `?limit=` 기본 50, 최대 200 |
 | `GET` | `/health` | | 헬스체크 |
+
+**읽기인데도 토큰을 요구하는 것은 `/api/audit` 뿐입니다.** 다른 조회는 화면을 그리는 데
+필요하니 열어 두었지만, 활동 로그는 누가 언제 무엇을 바꿨고 어떤 파일이 왜 막혔는지를
+담습니다. 그 자체가 관리자 화면의 내용이라 조회에도 권한을 요구합니다.
 
 실패 응답은 형태가 하나입니다. **상태 코드보다 `code` 가 실질입니다** — 상태 코드는 프록시나
 서버가 만들어낼 수도 있어 애플리케이션의 판정과 1:1로 대응하지 않기 때문입니다.
@@ -252,6 +257,9 @@ curl -i -X POST http://localhost:8080/api/files -F "file=@sample.exe"
 # 이름만 바꿔도 통과하지 못한다 → 422 FILE_EXECUTABLE_CONTENT
 printf 'MZ\x90\x00' > disguised.txt
 curl -i -X POST http://localhost:8080/api/files -F "file=@disguised.txt"
+
+# 방금까지의 일이 한 줄기로 남는다 (토큰이 없으면 401 ADMIN_TOKEN_REQUIRED)
+curl -s http://localhost:8080/api/audit -H "X-Admin-Token: $TOKEN"
 ```
 
 ---
@@ -290,7 +298,7 @@ extension/                     Spring Boot (Java 21, Gradle Kotlin DSL)
   src/main/java/flow/test/serverdev/
     policy/                    확장자 정책 — 정규화, 슬롯 할당, 정책 조회/변경
     upload/                    업로드 파이프라인 — 검증, 저장, 목록/다운로드/삭제
-    audit/                     감사 기록과 PENDING 스위퍼
+    audit/                     감사 기록, 활동 로그 조회, PENDING 스위퍼
     storage/                   오브젝트 스토리지 추상화 (MinIO 구현)
     common/                    오류 계약, 관리 토큰 필터, 속도 제한, 보안 헤더
   src/main/resources/db/
@@ -299,7 +307,7 @@ extension/                     Spring Boot (Java 21, Gradle Kotlin DSL)
   src/test/                    단위 · property · Testcontainers 통합 테스트
 
 web/                           React 19 + TypeScript (Vite)
-  src/components/              정책 패널, 업로드 패널, 파일 목록, 토스트
+  src/components/              정책 패널, 업로드 패널, 파일 목록, 활동 로그, 토스트
   src/store/uploadQueue.ts     업로드 큐 (zustand) — 순차 실행, 재시도, 취소
   src/api/                     API 클라이언트와 타입
 
